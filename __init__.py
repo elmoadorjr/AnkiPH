@@ -1,5 +1,5 @@
 """
-Ottorney Anki Addon
+Nottorney Anki Addon
 Main entry point for the addon
 """
 
@@ -7,9 +7,26 @@ from aqt import mw, gui_hooks
 from aqt.qt import QAction
 from aqt.utils import showInfo
 
-from .ui.login_dialog import LoginDialog
-from .ui.deck_manager_dialog import DeckManagerDialog
-from .config import config
+# Import all modules at the top to catch import errors early
+try:
+    from .ui.login_dialog import LoginDialog
+    from .ui.deck_manager_dialog import DeckManagerDialog
+    from .config import config
+    from . import sync  # Import the sync module
+except ImportError as e:
+    # If imports fail, show error and exit gracefully
+    def show_import_error():
+        showInfo(f"Ottorney addon import error: {str(e)}\n\nPlease reinstall the addon.")
+    
+    # Set up a minimal menu that shows the error
+    def setup_error_menu():
+        menu = mw.form.menuTools.addMenu("Ottorney (Error)")
+        error_action = QAction("Show Error", mw)
+        error_action.triggered.connect(show_import_error)
+        menu.addAction(error_action)
+    
+    setup_error_menu()
+    raise  # Re-raise to see full traceback
 
 # Addon metadata
 ADDON_NAME = "Ottorney"
@@ -40,9 +57,8 @@ def on_sync_progress():
     if not config.is_logged_in():
         return
     
-    from .sync import sync_progress
     try:
-        sync_progress()
+        sync.sync_progress()
         showInfo("Progress synced successfully!")
     except Exception as e:
         showInfo(f"Error syncing progress: {str(e)}")
@@ -83,13 +99,23 @@ def logout():
     showInfo("Logged out successfully")
 
 
+def safe_auto_sync():
+    """Safely attempt auto-sync without showing errors"""
+    try:
+        if config.is_logged_in():
+            sync.sync_progress()
+    except Exception:
+        # Silently fail for auto-sync
+        pass
+
+
 # Initialize the addon
 def init_addon():
     """Initialize the addon when Anki starts"""
     setup_menu()
     
     # Auto-sync progress on profile load
-    gui_hooks.profile_did_open.append(lambda: on_sync_progress() if config.is_logged_in() else None)
+    gui_hooks.profile_did_open.append(safe_auto_sync)
 
 
 # Run initialization
