@@ -18,6 +18,7 @@ class NottorneyAPI:
     
     def __init__(self):
         self.base_url = config.get_api_url()
+        self._refreshing_token = False  # Prevent infinite refresh loops
     
     def _get_headers(self, include_auth=False):
         """Get request headers"""
@@ -27,63 +28,90 @@ class NottorneyAPI:
         
         if include_auth:
             # Check if token is expired and refresh if needed
-            if config.is_token_expired():
+            # Prevent infinite loop with flag
+            if config.is_token_expired() and not self._refreshing_token:
                 try:
-                    self.refresh_token()
+                    print("Token expired, attempting refresh...")
+                    self._refreshing_token = True
+                    result = self.refresh_token()
+                    self._refreshing_token = False
+                    
+                    if not result.get('success'):
+                        print("Token refresh failed, clearing tokens")
+                        config.clear_tokens()
+                        raise NottorneyAPIError("Session expired. Please login again.")
                 except Exception as e:
-                    print(f"Token refresh failed: {e}")
-                    # Don't clear tokens here, let the user try again
+                    self._refreshing_token = False
+                    print(f"Token refresh exception: {e}")
+                    config.clear_tokens()
+                    raise NottorneyAPIError("Session expired. Please login again.")
             
             access_token = config.get_access_token()
             if access_token:
                 headers['Authorization'] = f'Bearer {access_token}'
+            else:
+                raise NottorneyAPIError("Not authenticated. Please login.")
         
         return headers
     
-    def _make_request(self, method, endpoint, data=None, include_auth=False):
+    def _make_request(self, method, endpoint, data=None, include_auth=False, timeout=30):
         """Make an HTTP request to the API"""
         url = f"{self.base_url}{endpoint}"
-        headers = self._get_headers(include_auth)
+        
+        try:
+            headers = self._get_headers(include_auth)
+        except NottorneyAPIError:
+            # Re-raise authentication errors
+            raise
         
         # Debug logging
         print(f"Making {method} request to: {url}")
         if data:
-            print(f"Request data: {data}")
+            # Don't log passwords
+            safe_data = data.copy()
+            if 'password' in safe_data:
+                safe_data['password'] = '***'
+            print(f"Request data: {safe_data}")
         
         try:
             if method == 'GET':
-                response = requests.get(url, headers=headers, timeout=30)
+                response = requests.get(url, headers=headers, timeout=timeout)
             elif method == 'POST':
-                response = requests.post(url, json=data, headers=headers, timeout=30)
+                response = requests.post(url, json=data, headers=headers, timeout=timeout)
             else:
                 raise ValueError(f"Unsupported method: {method}")
             
             print(f"Response status: {response.status_code}")
             
-            response.raise_for_status()
-            result = response.json()
-            print(f"Response data: {result}")
+            # Handle different status codes
+            if response.status_code == 401:
+                # Unauthorized - token invalid
+                config.clear_tokens()
+                raise NottorneyAPIError("Authentication failed. Please login again.")
+            
+            # Try to parse JSON response
+            try:
+                result = response.json()
+                print(f"Response data: {result}")
+            except ValueError:
+                # Not JSON response
+                if response.status_code >= 400:
+                    raise NottorneyAPIError(f"HTTP Error {response.status_code}: {response.text[:200]}")
+                result = {"success": True, "data": response.text}
+            
+            # Check for HTTP errors
+            if response.status_code >= 400:
+                error_msg = result.get('error') or result.get('message') or f"HTTP Error {response.status_code}"
+                raise NottorneyAPIError(error_msg)
+            
             return result
         
         except requests.exceptions.Timeout:
-            raise NottorneyAPIError("Request timed out")
+            raise NottorneyAPIError("Request timed out. Please check your internet connection.")
         except requests.exceptions.ConnectionError:
             raise NottorneyAPIError("Connection error. Please check your internet connection.")
-        except requests.exceptions.HTTPError as e:
-            error_msg = f"HTTP Error: {e.response.status_code}"
-            try:
-                error_data = e.response.json()
-                print(f"Error response: {error_data}")
-                if 'message' in error_data:
-                    error_msg = error_data['message']
-                elif 'error' in error_data:
-                    error_msg = error_data['error']
-            except:
-                pass
-            raise NottorneyAPIError(error_msg)
-        except Exception as e:
-            print(f"Unexpected error: {e}")
-            raise NottorneyAPIError(f"Unexpected error: {str(e)}")
+        except requests.exceptions.RequestException as e:
+            raise NottorneyAPIError(f"Network error: {str(e)}")
     
     # Authentication endpoints
     def login(self, email: str, password: str) -> Dict:
@@ -91,6 +119,9 @@ class NottorneyAPI:
         Login to the Nottorney API
         Returns: { "success": true, "user": {...}, "access_token": "...", "refresh_token": "...", "expires_at": ... }
         """
+        if not email or not password:
+            raise NottorneyAPIError("Email and password are required")
+        
         data = {
             'email': email,
             'password': password
@@ -99,6 +130,10 @@ class NottorneyAPI:
         result = self._make_request('POST', '/addon-login', data)
         
         if result.get('success'):
+            # Validate response structure
+            if not all(k in result for k in ['access_token', 'refresh_token', 'expires_at', 'user']):
+                raise NottorneyAPIError("Invalid login response from server")
+            
             # Save tokens to config
             config.save_tokens(
                 result['access_token'],
@@ -107,6 +142,8 @@ class NottorneyAPI:
             )
             config.save_user(result['user'])
             print(f"Login successful, token expires at: {result['expires_at']}")
+        else:
+            raise NottorneyAPIError(result.get('error', 'Login failed'))
         
         return result
     
@@ -124,9 +161,15 @@ class NottorneyAPI:
         }
         
         print(f"Attempting to refresh token...")
-        result = self._make_request('POST', '/addon-refresh-token', data)
+        
+        # Don't use include_auth=True here to avoid recursion
+        result = self._make_request('POST', '/addon-refresh-token', data, include_auth=False)
         
         if result.get('success'):
+            # Validate response structure
+            if not all(k in result for k in ['access_token', 'refresh_token', 'expires_at']):
+                raise NottorneyAPIError("Invalid refresh response from server")
+            
             # Save new tokens
             config.save_tokens(
                 result['access_token'],
@@ -134,6 +177,8 @@ class NottorneyAPI:
                 result['expires_at']
             )
             print(f"Token refreshed successfully, expires at: {result['expires_at']}")
+        else:
+            raise NottorneyAPIError(result.get('error', 'Token refresh failed'))
         
         return result
     
@@ -143,19 +188,25 @@ class NottorneyAPI:
         Get list of decks purchased by the user
         Returns: { "success": true, "decks": [...], "total_count": 5 }
         """
-        result = self._make_request('POST', '/addon-get-purchases', include_auth=True)
+        result = self._make_request('GET', '/addon-get-purchases', include_auth=True)
         
         if result.get('success'):
             decks = result.get('decks', [])
             print(f"Retrieved {len(decks)} decks")
+            
+            # Validate deck structure
+            for deck in decks:
+                if 'deck_id' not in deck and 'id' not in deck:
+                    print(f"Warning: Deck missing ID field: {deck}")
+            
             return decks
         
-        raise NottorneyAPIError("Failed to get purchased decks")
+        raise NottorneyAPIError(result.get('error', 'Failed to get purchased decks'))
     
     def download_deck(self, deck_id: str, version: Optional[str] = None) -> Dict:
         """
         Get download URL for a deck
-        Returns: { "success": true, "download_url": "...", "deck_title": "...", "version": "...", "expires_in": 3600 }
+        Returns: { "success": true, "download_url": "...", "title": "...", "version": "...", "expires_at": ... }
         """
         if not deck_id:
             raise NottorneyAPIError("deck_id is required")
@@ -171,9 +222,12 @@ class NottorneyAPI:
         result = self._make_request('POST', '/addon-download-deck', data, include_auth=True)
         
         if result.get('success'):
+            # Validate response
+            if 'download_url' not in result:
+                raise NottorneyAPIError("No download URL in response")
             return result
         
-        raise NottorneyAPIError("Failed to get download URL")
+        raise NottorneyAPIError(result.get('error', 'Failed to get download URL'))
     
     def download_deck_file(self, download_url: str) -> bytes:
         """
@@ -181,12 +235,19 @@ class NottorneyAPI:
         Returns: The deck file content as bytes
         """
         try:
-            print(f"Downloading deck file from: {download_url}")
-            response = requests.get(download_url, timeout=120)
+            print(f"Downloading deck file from: {download_url[:50]}...")
+            response = requests.get(download_url, timeout=120, stream=True)
             response.raise_for_status()
-            print(f"Downloaded {len(response.content)} bytes")
-            return response.content
-        except Exception as e:
+            
+            # Read in chunks to handle large files
+            content = b''
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    content += chunk
+            
+            print(f"Downloaded {len(content)} bytes")
+            return content
+        except requests.exceptions.RequestException as e:
             raise NottorneyAPIError(f"Failed to download deck file: {str(e)}")
     
     # Progress sync endpoint
@@ -196,6 +257,9 @@ class NottorneyAPI:
         progress_data: [{ "deck_id": "...", "total_cards_studied": 100, ... }]
         Returns: { "success": true, "synced_count": 3 }
         """
+        if not progress_data:
+            return {"success": True, "synced_count": 0}
+        
         data = {
             'progress': progress_data
         }
@@ -205,7 +269,12 @@ class NottorneyAPI:
         if result.get('success'):
             return result
         
-        raise NottorneyAPIError("Failed to sync progress")
+        # Don't raise error if progress sync is disabled
+        if 'not enabled' in result.get('error', '').lower():
+            print("Progress sync not enabled for this user")
+            return {"success": False, "synced_count": 0}
+        
+        raise NottorneyAPIError(result.get('error', 'Failed to sync progress'))
 
 
 # Global API client instance
