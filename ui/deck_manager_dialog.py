@@ -91,6 +91,16 @@ class DeckManagerDialog(QDialog):
         # Try different possible field names
         return deck.get('deck_id') or deck.get('id') or deck.get('_id') or None
     
+    def get_deck_version(self, deck):
+        """Safely extract version from deck object"""
+        # Try different possible field names for version
+        # Based on the API response, try these in order
+        return (deck.get('current_version') or 
+                deck.get('version') or 
+                deck.get('deck_version') or 
+                deck.get('latest_version') or
+                '1.0')  # Default fallback
+    
     def load_decks(self):
         """Load purchased decks from the API"""
         self.info_label.setText("Loading decks...")
@@ -110,7 +120,10 @@ class DeckManagerDialog(QDialog):
             
             # Debug: Print the first deck to see structure
             if self.decks:
-                print(f"Sample deck structure: {self.decks[0]}")
+                print(f"=== Sample deck structure ===")
+                print(f"All fields: {list(self.decks[0].keys())}")
+                print(f"Full deck data: {self.decks[0]}")
+                print(f"=========================")
             
             # Add decks to list
             for deck in self.decks:
@@ -119,9 +132,11 @@ class DeckManagerDialog(QDialog):
                 # Extract deck info safely
                 deck_title = deck.get('title', 'Unknown Deck')
                 deck_subject = deck.get('subject', 'N/A')
-                deck_version = deck.get('current_version') or deck.get('version', 'N/A')
+                deck_version = self.get_deck_version(deck)
                 card_count = deck.get('card_count', 0)
                 deck_id = self.get_deck_id(deck)
+                
+                print(f"Processing deck: {deck_title} (ID: {deck_id}, Version: {deck_version})")
                 
                 if not deck_id:
                     print(f"Warning: Deck has no ID field: {deck}")
@@ -191,7 +206,7 @@ class DeckManagerDialog(QDialog):
         deck_description = deck.get('description', 'No description available')
         deck_subject = deck.get('subject', 'N/A')
         card_count = deck.get('card_count', 0)
-        deck_version = deck.get('current_version') or deck.get('version', 'N/A')
+        deck_version = self.get_deck_version(deck)
         
         deck_id = self.get_deck_id(deck)
         is_downloaded = config.is_deck_downloaded(deck_id) if deck_id else False
@@ -217,6 +232,12 @@ class DeckManagerDialog(QDialog):
         
         # Extract deck info
         deck_id = self.get_deck_id(deck)
+        deck_version = self.get_deck_version(deck)
+        
+        print(f"=== Starting download ===")
+        print(f"Deck ID: {deck_id}")
+        print(f"Deck Version: {deck_version}")
+        print(f"Full deck data: {deck}")
         
         if not deck_id:
             QMessageBox.critical(
@@ -227,7 +248,6 @@ class DeckManagerDialog(QDialog):
             return
         
         deck_title = deck.get('title', 'Unknown Deck')
-        deck_version = deck.get('current_version') or deck.get('version')
         
         # Check if already downloaded
         if config.is_deck_downloaded(deck_id):
@@ -255,7 +275,22 @@ class DeckManagerDialog(QDialog):
             progress.setLabelText("Getting download link...")
             progress.setValue(20)
             
-            download_info = api.download_deck(deck_id, deck_version)
+            # IMPORTANT: Pass version to the API
+            # Try without version first (let API use latest), then with version if it fails
+            print(f"Requesting download URL for deck_id={deck_id}, version={deck_version}")
+            
+            try:
+                # First attempt: Let the API determine the version
+                download_info = api.download_deck(deck_id, version=None)
+            except NottorneyAPIError as e:
+                if "version" in str(e).lower():
+                    # If version error, try with explicit version
+                    print(f"Retrying with explicit version: {deck_version}")
+                    download_info = api.download_deck(deck_id, version=deck_version)
+                else:
+                    raise
+            
+            print(f"Download info received: {download_info}")
             
             download_url = download_info.get('download_url')
             if not download_url:
@@ -270,17 +305,22 @@ class DeckManagerDialog(QDialog):
             if not deck_content:
                 raise NottorneyAPIError("Downloaded file is empty")
             
+            print(f"Successfully downloaded {len(deck_content)} bytes")
+            
             # Import into Anki
             progress.setLabelText("Importing into Anki...")
             progress.setValue(70)
             
             anki_deck_id = import_deck(deck_content, deck_title)
+            print(f"Imported to Anki deck ID: {anki_deck_id}")
             
             # Save to config
             progress.setLabelText("Finalizing...")
             progress.setValue(90)
             
-            config.save_downloaded_deck(deck_id, deck_version, anki_deck_id)
+            # Use the version from the download_info response if available
+            actual_version = download_info.get('version', deck_version)
+            config.save_downloaded_deck(deck_id, actual_version, anki_deck_id)
             
             progress.setValue(100)
             progress.close()
@@ -288,7 +328,7 @@ class DeckManagerDialog(QDialog):
             QMessageBox.information(
                 self,
                 "Success",
-                f"Successfully downloaded and imported:\n\n'{deck_title}' (v{deck_version})\n\nThe deck is now available in your Anki collection!"
+                f"Successfully downloaded and imported:\n\n'{deck_title}' (v{actual_version})\n\nThe deck is now available in your Anki collection!"
             )
             
             # Refresh the list
@@ -296,10 +336,18 @@ class DeckManagerDialog(QDialog):
         
         except NottorneyAPIError as e:
             progress.close()
-            QMessageBox.warning(self, "Download Error", f"Download failed:\n\n{str(e)}")
+            error_detail = str(e)
+            print(f"Download error: {error_detail}")
+            
+            # Provide more helpful error messages
+            if "version not found" in error_detail.lower():
+                error_detail += f"\n\nDeck ID: {deck_id}\nRequested Version: {deck_version}\n\nThe version might not exist on the server. Contact support if this persists."
+            
+            QMessageBox.warning(self, "Download Error", f"Download failed:\n\n{error_detail}")
         
         except Exception as e:
             progress.close()
+            print(f"Unexpected error: {str(e)}")
             QMessageBox.critical(self, "Error", f"Unexpected error during download:\n\n{str(e)}\n\nCheck the Anki console for details.")
             import traceback
             print(traceback.format_exc())

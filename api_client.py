@@ -65,13 +65,16 @@ class NottorneyAPI:
             raise
         
         # Debug logging
-        print(f"Making {method} request to: {url}")
+        print(f"=== API Request ===")
+        print(f"Method: {method}")
+        print(f"URL: {url}")
         if data:
             # Don't log passwords
             safe_data = data.copy()
             if 'password' in safe_data:
                 safe_data['password'] = '***'
             print(f"Request data: {safe_data}")
+        print(f"==================")
         
         try:
             if method == 'GET':
@@ -81,11 +84,13 @@ class NottorneyAPI:
             else:
                 raise ValueError(f"Unsupported method: {method}")
             
-            print(f"Response status: {response.status_code}")
+            print(f"=== API Response ===")
+            print(f"Status: {response.status_code}")
             
             # Handle different status codes
             if response.status_code == 401:
                 # Unauthorized - token invalid
+                print("401 Unauthorized - clearing tokens")
                 config.clear_tokens()
                 raise NottorneyAPIError("Authentication failed. Please login again.")
             
@@ -93,8 +98,11 @@ class NottorneyAPI:
             try:
                 result = response.json()
                 print(f"Response data: {result}")
+                print(f"===================")
             except ValueError:
                 # Not JSON response
+                print(f"Non-JSON response: {response.text[:200]}")
+                print(f"===================")
                 if response.status_code >= 400:
                     raise NottorneyAPIError(f"HTTP Error {response.status_code}: {response.text[:200]}")
                 result = {"success": True, "data": response.text}
@@ -102,15 +110,19 @@ class NottorneyAPI:
             # Check for HTTP errors
             if response.status_code >= 400:
                 error_msg = result.get('error') or result.get('message') or f"HTTP Error {response.status_code}"
+                print(f"Error response: {error_msg}")
                 raise NottorneyAPIError(error_msg)
             
             return result
         
         except requests.exceptions.Timeout:
+            print("Request timeout")
             raise NottorneyAPIError("Request timed out. Please check your internet connection.")
-        except requests.exceptions.ConnectionError:
+        except requests.exceptions.ConnectionError as e:
+            print(f"Connection error: {e}")
             raise NottorneyAPIError("Connection error. Please check your internet connection.")
         except requests.exceptions.RequestException as e:
+            print(f"Request exception: {e}")
             raise NottorneyAPIError(f"Network error: {str(e)}")
     
     # Authentication endpoints
@@ -194,10 +206,11 @@ class NottorneyAPI:
             decks = result.get('decks', [])
             print(f"Retrieved {len(decks)} decks")
             
-            # Validate deck structure
-            for deck in decks:
+            # Validate and log deck structure
+            for i, deck in enumerate(decks):
+                print(f"Deck {i+1} fields: {list(deck.keys())}")
                 if 'deck_id' not in deck and 'id' not in deck:
-                    print(f"Warning: Deck missing ID field: {deck}")
+                    print(f"Warning: Deck {i+1} missing ID field")
             
             return decks
         
@@ -215,19 +228,31 @@ class NottorneyAPI:
             'deck_id': deck_id
         }
         
+        # Only include version if explicitly provided
         if version:
             data['version'] = version
+            print(f"Requesting download for deck_id: {deck_id}, version: {version}")
+        else:
+            print(f"Requesting download for deck_id: {deck_id} (latest version)")
         
-        print(f"Requesting download for deck_id: {deck_id}, version: {version}")
         result = self._make_request('POST', '/addon-download-deck', data, include_auth=True)
         
         if result.get('success'):
             # Validate response
             if 'download_url' not in result:
                 raise NottorneyAPIError("No download URL in response")
+            
+            # Log what we received
+            print(f"Download URL obtained for version: {result.get('version', 'unknown')}")
+            
             return result
         
-        raise NottorneyAPIError(result.get('error', 'Failed to get download URL'))
+        # Enhanced error message
+        error_msg = result.get('error', 'Failed to get download URL')
+        if 'version' in error_msg.lower():
+            error_msg += f"\n\nRequested: deck_id={deck_id}, version={version or 'latest'}"
+        
+        raise NottorneyAPIError(error_msg)
     
     def download_deck_file(self, download_url: str) -> bytes:
         """
@@ -235,19 +260,29 @@ class NottorneyAPI:
         Returns: The deck file content as bytes
         """
         try:
-            print(f"Downloading deck file from: {download_url[:50]}...")
+            print(f"Downloading deck file...")
+            print(f"URL: {download_url[:100]}...")
+            
             response = requests.get(download_url, timeout=120, stream=True)
             response.raise_for_status()
             
             # Read in chunks to handle large files
             content = b''
+            chunk_count = 0
             for chunk in response.iter_content(chunk_size=8192):
                 if chunk:
                     content += chunk
+                    chunk_count += 1
+                    if chunk_count % 100 == 0:  # Log every 100 chunks
+                        print(f"Downloaded {len(content)} bytes...")
             
-            print(f"Downloaded {len(content)} bytes")
+            print(f"Download complete: {len(content)} bytes total")
             return content
+        except requests.exceptions.HTTPError as e:
+            print(f"HTTP error during download: {e}")
+            raise NottorneyAPIError(f"Failed to download deck file: HTTP {e.response.status_code}")
         except requests.exceptions.RequestException as e:
+            print(f"Request error during download: {e}")
             raise NottorneyAPIError(f"Failed to download deck file: {str(e)}")
     
     # Progress sync endpoint
@@ -264,13 +299,17 @@ class NottorneyAPI:
             'progress': progress_data
         }
         
+        print(f"Syncing progress for {len(progress_data)} deck(s)")
+        
         result = self._make_request('POST', '/addon-sync-progress', data, include_auth=True)
         
         if result.get('success'):
+            print(f"Progress synced: {result.get('synced_count', 0)} deck(s)")
             return result
         
         # Don't raise error if progress sync is disabled
-        if 'not enabled' in result.get('error', '').lower():
+        error = result.get('error', '').lower()
+        if 'not enabled' in error or 'disabled' in error:
             print("Progress sync not enabled for this user")
             return {"success": False, "synced_count": 0}
         
