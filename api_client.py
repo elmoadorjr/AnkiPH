@@ -45,6 +45,11 @@ class NottorneyAPI:
         url = f"{self.base_url}{endpoint}"
         headers = self._get_headers(include_auth)
         
+        # Debug logging
+        print(f"Making {method} request to: {url}")
+        if data:
+            print(f"Request data: {data}")
+        
         try:
             if method == 'GET':
                 response = requests.get(url, headers=headers, timeout=30)
@@ -53,8 +58,12 @@ class NottorneyAPI:
             else:
                 raise ValueError(f"Unsupported method: {method}")
             
+            print(f"Response status: {response.status_code}")
+            
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            print(f"Response data: {result}")
+            return result
         
         except requests.exceptions.Timeout:
             raise NottorneyAPIError("Request timed out")
@@ -64,6 +73,7 @@ class NottorneyAPI:
             error_msg = f"HTTP Error: {e.response.status_code}"
             try:
                 error_data = e.response.json()
+                print(f"Error response: {error_data}")
                 if 'message' in error_data:
                     error_msg = error_data['message']
                 elif 'error' in error_data:
@@ -72,6 +82,7 @@ class NottorneyAPI:
                 pass
             raise NottorneyAPIError(error_msg)
         except Exception as e:
+            print(f"Unexpected error: {e}")
             raise NottorneyAPIError(f"Unexpected error: {str(e)}")
     
     # Authentication endpoints
@@ -135,7 +146,9 @@ class NottorneyAPI:
         result = self._make_request('POST', '/addon-get-purchases', include_auth=True)
         
         if result.get('success'):
-            return result.get('decks', [])
+            decks = result.get('decks', [])
+            print(f"Retrieved {len(decks)} decks")
+            return decks
         
         raise NottorneyAPIError("Failed to get purchased decks")
     
@@ -144,6 +157,9 @@ class NottorneyAPI:
         Get download URL for a deck
         Returns: { "success": true, "download_url": "...", "deck_title": "...", "version": "...", "expires_in": 3600 }
         """
+        if not deck_id:
+            raise NottorneyAPIError("deck_id is required")
+        
         data = {
             'deck_id': deck_id
         }
@@ -151,6 +167,7 @@ class NottorneyAPI:
         if version:
             data['version'] = version
         
+        print(f"Requesting download for deck_id: {deck_id}, version: {version}")
         result = self._make_request('POST', '/addon-download-deck', data, include_auth=True)
         
         if result.get('success'):
@@ -164,8 +181,10 @@ class NottorneyAPI:
         Returns: The deck file content as bytes
         """
         try:
+            print(f"Downloading deck file from: {download_url}")
             response = requests.get(download_url, timeout=120)
             response.raise_for_status()
+            print(f"Downloaded {len(response.content)} bytes")
             return response.content
         except Exception as e:
             raise NottorneyAPIError(f"Failed to download deck file: {str(e)}")

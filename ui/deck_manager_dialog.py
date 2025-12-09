@@ -79,6 +79,10 @@ class DeckManagerDialog(QDialog):
             
             self.info_label.setText(f"Found {len(self.decks)} deck(s)")
             
+            # Debug: Print the first deck to see structure
+            if self.decks:
+                print(f"Sample deck structure: {self.decks[0]}")
+            
             # Add decks to list
             for deck in self.decks:
                 item = QListWidgetItem()
@@ -86,7 +90,8 @@ class DeckManagerDialog(QDialog):
                 # Format deck info
                 deck_title = deck.get('title', 'Unknown Deck')
                 deck_version = deck.get('version', 'N/A')
-                deck_id = deck.get('id', '')
+                # Try multiple possible field names for deck_id
+                deck_id = deck.get('id') or deck.get('deck_id') or deck.get('_id') or ''
                 
                 # Check if already downloaded
                 is_downloaded = config.is_deck_downloaded(deck_id)
@@ -129,7 +134,20 @@ class DeckManagerDialog(QDialog):
         item = selected_items[0]
         deck = item.data(Qt.ItemDataRole.UserRole)
         
-        deck_id = deck.get('id')
+        # Debug: Print the deck data to see what fields are available
+        print(f"Deck data: {deck}")
+        
+        # Try multiple possible field names for deck_id
+        deck_id = deck.get('id') or deck.get('deck_id') or deck.get('_id')
+        
+        if not deck_id:
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Invalid deck data: missing deck ID\n\nDeck data: {deck}"
+            )
+            return
+        
         deck_title = deck.get('title', 'Unknown Deck')
         deck_version = deck.get('version')
         
