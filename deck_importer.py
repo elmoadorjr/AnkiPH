@@ -1,6 +1,6 @@
 """
 Deck importer for the Nottorney addon
-Handles importing .apkg files into Anki
+Handles importing .apkg files into Anki with modern compression support
 """
 
 import tempfile
@@ -8,48 +8,61 @@ import os
 from pathlib import Path
 from aqt import mw
 from aqt.operations import QueryOp
-from anki.importing import AnkiPackageImporter
+
+# Use the modern importer that handles zstd compression
+from anki.importing.anki2 import AnkiPackageImporter
 
 
-def import_deck(deck_content: bytes, deck_name: str) -> int:
+def import_deck(deck_content: bytes, deck_title: str) -> int:
     """
     Import a deck into Anki from .apkg file content
     
     Args:
         deck_content: The .apkg file content as bytes
-        deck_name: Name of the deck
+        deck_title: Title of the deck (for reference)
     
     Returns:
         The Anki deck ID of the imported deck
+    
+    Raises:
+        Exception: If import fails
     """
-    # Create a temporary file to store the .apkg
-    with tempfile.NamedTemporaryFile(suffix='.apkg', delete=False) as temp_file:
-        temp_file.write(deck_content)
-        temp_file_path = temp_file.name
+    if not deck_content:
+        raise ValueError("Deck content is empty")
+    
+    # Save to temp file
+    with tempfile.NamedTemporaryFile(suffix='.apkg', delete=False) as f:
+        f.write(deck_content)
+        temp_path = f.name
+    
+    print(f"Created temp file: {temp_path} ({len(deck_content)} bytes)")
     
     try:
-        # Import the deck using Anki's importer
-        importer = AnkiPackageImporter(mw.col, temp_file_path)
-        
-        # Run the import
+        # Use the modern importer that handles zstd compression
+        print("Starting import with AnkiPackageImporter...")
+        importer = AnkiPackageImporter(mw.col, temp_path)
         importer.run()
         
-        # Get the deck ID
-        # The importer usually creates a deck with the name from the package
-        # or uses an existing deck with that name
-        deck_id = mw.col.decks.id(deck_name)
+        # Get the deck ID from the importer
+        deck_id = importer.dst_deck_id
+        print(f"Import successful! Deck ID: {deck_id}")
         
         # Refresh the main window to show the new deck
         mw.reset()
         
         return deck_id
     
+    except Exception as e:
+        print(f"Import failed: {e}")
+        raise Exception(f"Failed to import deck: {str(e)}")
+    
     finally:
         # Clean up the temporary file
         try:
-            os.unlink(temp_file_path)
-        except:
-            pass
+            os.unlink(temp_path)
+            print(f"Cleaned up temp file")
+        except Exception as e:
+            print(f"Warning: Failed to delete temp file: {e}")
 
 
 def import_deck_with_progress(deck_content: bytes, deck_name: str, 
@@ -95,36 +108,56 @@ def get_deck_stats(deck_id: int) -> dict:
     Returns:
         Dictionary with deck statistics
     """
-    deck = mw.col.decks.get(deck_id)
+    try:
+        deck = mw.col.decks.get(deck_id)
+        
+        if not deck:
+            print(f"Deck ID {deck_id} not found")
+            return {}
+        
+        # Get card counts
+        card_ids = mw.col.decks.cids(deck_id, children=True)
+        total_cards = len(card_ids)
+        
+        # Count cards by type
+        new_cards = 0
+        learning_cards = 0
+        review_cards = 0
+        suspended_cards = 0
+        
+        for card_id in card_ids:
+            try:
+                card = mw.col.get_card(card_id)
+                
+                # Check if suspended
+                if card.queue == -1:
+                    suspended_cards += 1
+                    continue
+                
+                # Count by type
+                if card.type == 0:  # New
+                    new_cards += 1
+                elif card.type == 1:  # Learning/relearning
+                    learning_cards += 1
+                elif card.type == 2:  # Review
+                    review_cards += 1
+            except Exception as e:
+                print(f"Error getting card {card_id}: {e}")
+                continue
+        
+        return {
+            'name': deck['name'],
+            'deck_id': deck_id,
+            'total_cards': total_cards,
+            'new_cards': new_cards,
+            'learning_cards': learning_cards,
+            'review_cards': review_cards,
+            'suspended_cards': suspended_cards
+        }
     
-    if not deck:
+    except Exception as e:
+        print(f"Error getting deck stats for {deck_id}: {e}")
         return {}
-    
-    # Get card counts
-    card_ids = mw.col.decks.cids(deck_id, children=True)
-    total_cards = len(card_ids)
-    
-    # Count new, learning, and review cards
-    new_cards = 0
-    learning_cards = 0
-    review_cards = 0
-    
-    for card_id in card_ids:
-        card = mw.col.get_card(card_id)
-        if card.type == 0:  # New
-            new_cards += 1
-        elif card.type == 1:  # Learning
-            learning_cards += 1
-        elif card.type == 2:  # Review
-            review_cards += 1
-    
-    return {
-        'name': deck['name'],
-        'total_cards': total_cards,
-        'new_cards': new_cards,
-        'learning_cards': learning_cards,
-        'review_cards': review_cards
-    }
 
 
 def get_all_deck_stats() -> list:
@@ -132,15 +165,20 @@ def get_all_deck_stats() -> list:
     Get statistics for all decks
     
     Returns:
-        List of deck statistics
+        List of deck statistics dictionaries
     """
-    all_decks = mw.col.decks.all()
-    stats = []
+    try:
+        all_decks = mw.col.decks.all()
+        stats = []
+        
+        for deck in all_decks:
+            deck_id = deck['id']
+            deck_stats = get_deck_stats(deck_id)
+            if deck_stats:
+                stats.append(deck_stats)
+        
+        return stats
     
-    for deck in all_decks:
-        deck_id = deck['id']
-        deck_stats = get_deck_stats(deck_id)
-        if deck_stats:
-            stats.append(deck_stats)
-    
-    return stats
+    except Exception as e:
+        print(f"Error getting all deck stats: {e}")
+        return []
