@@ -13,6 +13,7 @@ try:
     from .ui.deck_manager_dialog import DeckManagerDialog
     from .config import config
     from . import sync  # Import the sync module
+    from .api_client import api
 except ImportError as e:
     # If imports fail, show error and exit gracefully
     def show_import_error():
@@ -33,6 +34,25 @@ ADDON_NAME = "Nottorney"
 ADDON_VERSION = "1.0.0"
 
 
+def ensure_valid_token():
+    """Ensure we have a valid token, refresh if needed"""
+    if not config.get_access_token():
+        return False
+    
+    if config.is_token_expired():
+        try:
+            print("Token expired, attempting refresh...")
+            api.refresh_token()
+            return True
+        except Exception as e:
+            print(f"Token refresh failed: {e}")
+            # Clear invalid tokens
+            config.clear_tokens()
+            return False
+    
+    return True
+
+
 def show_login():
     """Show the login dialog"""
     dialog = LoginDialog(mw)
@@ -44,7 +64,8 @@ def show_login():
 
 def show_deck_manager():
     """Show the deck manager dialog"""
-    if not config.is_logged_in():
+    # Check if we have a valid token (will refresh if expired)
+    if not ensure_valid_token():
         showInfo("Please login first")
         show_login()
         return
@@ -55,8 +76,10 @@ def show_deck_manager():
 
 def on_sync_progress():
     """Sync progress to server"""
-    if not config.is_logged_in():
+    # Check if we have a valid token (will refresh if expired)
+    if not ensure_valid_token():
         showInfo("Please login first")
+        show_login()
         return
     
     try:
@@ -111,7 +134,7 @@ def safe_auto_sync():
     return
     
     try:
-        if config.is_logged_in():
+        if ensure_valid_token():
             sync.sync_progress()
             print("Auto-sync completed")
     except Exception as e:

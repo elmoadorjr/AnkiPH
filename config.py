@@ -77,8 +77,19 @@ class Config:
         """Check if the access token is expired"""
         expires_at = self.get_token_expiry()
         if not expires_at:
+            print("No expiry timestamp found")
             return True
-        return datetime.now().timestamp() >= expires_at
+        
+        current_time = datetime.now().timestamp()
+        is_expired = current_time >= expires_at
+        
+        if is_expired:
+            print(f"Token expired: current={current_time}, expires={expires_at}")
+        else:
+            time_left = expires_at - current_time
+            print(f"Token valid for {int(time_left/60)} more minutes")
+        
+        return is_expired
     
     def clear_tokens(self):
         """Clear all authentication tokens"""
