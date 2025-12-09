@@ -1,5 +1,5 @@
 """
-Progress syncing for the Ottorney addon
+Progress syncing for the Nottorney addon
 Syncs study progress to the server
 """
 
@@ -12,7 +12,7 @@ from .deck_importer import get_deck_stats
 
 def get_progress_data() -> list:
     """
-    Get progress data for all downloaded Ottorney decks
+    Get progress data for all downloaded Nottorney decks
     
     Returns:
         List of progress data dictionaries

@@ -1,5 +1,5 @@
 """
-Deck importer for the Ottorney addon
+Deck importer for the Nottorney addon
 Handles importing .apkg files into Anki
 """
 

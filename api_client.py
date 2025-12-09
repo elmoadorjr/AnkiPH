@@ -1,5 +1,5 @@
 """
-API client for the Ottorney backend
+API client for the Nottorney backend
 Handles all HTTP requests to your API
 """
 
@@ -8,13 +8,13 @@ from typing import Dict, List, Optional
 from .config import config
 
 
-class OttorneyAPIError(Exception):
+class NottorneyAPIError(Exception):
     """Custom exception for API errors"""
     pass
 
 
-class OttorneyAPI:
-    """Client for interacting with the Ottorney API"""
+class NottorneyAPI:
+    """Client for interacting with the Nottorney API"""
     
     def __init__(self):
         self.base_url = config.get_api_url()
@@ -53,9 +53,9 @@ class OttorneyAPI:
             return response.json()
         
         except requests.exceptions.Timeout:
-            raise OttorneyAPIError("Request timed out")
+            raise NottorneyAPIError("Request timed out")
         except requests.exceptions.ConnectionError:
-            raise OttorneyAPIError("Connection error. Please check your internet connection.")
+            raise NottorneyAPIError("Connection error. Please check your internet connection.")
         except requests.exceptions.HTTPError as e:
             error_msg = f"HTTP Error: {e.response.status_code}"
             try:
@@ -64,14 +64,14 @@ class OttorneyAPI:
                     error_msg = error_data['message']
             except:
                 pass
-            raise OttorneyAPIError(error_msg)
+            raise NottorneyAPIError(error_msg)
         except Exception as e:
-            raise OttorneyAPIError(f"Unexpected error: {str(e)}")
+            raise NottorneyAPIError(f"Unexpected error: {str(e)}")
     
     # Authentication endpoints
     def login(self, email: str, password: str) -> Dict:
         """
-        Login to the Ottorney API
+        Login to the Nottorney API
         Returns: { "success": true, "user": {...}, "access_token": "...", "refresh_token": "...", "expires_at": ... }
         """
         data = {
@@ -99,7 +99,7 @@ class OttorneyAPI:
         """
         refresh_token = config.get_refresh_token()
         if not refresh_token:
-            raise OttorneyAPIError("No refresh token available")
+            raise NottorneyAPIError("No refresh token available")
         
         data = {
             'refresh_token': refresh_token
@@ -128,7 +128,7 @@ class OttorneyAPI:
         if result.get('success'):
             return result.get('decks', [])
         
-        raise OttorneyAPIError("Failed to get purchased decks")
+        raise NottorneyAPIError("Failed to get purchased decks")
     
     def download_deck(self, deck_id: str, version: Optional[str] = None) -> Dict:
         """
@@ -147,7 +147,7 @@ class OttorneyAPI:
         if result.get('success'):
             return result
         
-        raise OttorneyAPIError("Failed to get download URL")
+        raise NottorneyAPIError("Failed to get download URL")
     
     def download_deck_file(self, download_url: str) -> bytes:
         """
@@ -159,7 +159,7 @@ class OttorneyAPI:
             response.raise_for_status()
             return response.content
         except Exception as e:
-            raise OttorneyAPIError(f"Failed to download deck file: {str(e)}")
+            raise NottorneyAPIError(f"Failed to download deck file: {str(e)}")
     
     # Progress sync endpoint
     def sync_progress(self, progress_data: List[Dict]) -> Dict:
@@ -177,8 +177,8 @@ class OttorneyAPI:
         if result.get('success'):
             return result
         
-        raise OttorneyAPIError("Failed to sync progress")
+        raise NottorneyAPIError("Failed to sync progress")
 
 
 # Global API client instance
-api = OttorneyAPI()
+api = NottorneyAPI()

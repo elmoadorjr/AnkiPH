@@ -1,9 +1,9 @@
 {
-  "package": "ottorney",
-  "name": "Ottorney",
+  "package": "Nottorney_Addon",
+  "name": "Nottorney",
   "version": "1.0.0",
-  "author": "Ottorney Team",
-  "homepage": "https://ottorney.com",
+  "author": "Nottorney Team",
+  "homepage": "https://nottorney.lovable.app",
   "conflicts": [],
   "mod": 0,
   "min_point_version": 50,
