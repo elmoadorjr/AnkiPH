@@ -1,6 +1,6 @@
 """
 Configuration management for the Nottorney addon
-FIXED VERSION - Better deck tracking and cleanup
+FIXED VERSION - Better deck tracking and cleanup + properly handles Anki deck IDs
 """
 
 from aqt import mw
@@ -174,9 +174,19 @@ class Config:
     # === DOWNLOADED DECKS TRACKING - FIXED ===
     
     def save_downloaded_deck(self, deck_id, version, anki_deck_id):
-        """Track a downloaded deck"""
+        """
+        Track a downloaded deck
+        FIXED: Ensures anki_deck_id is stored as integer
+        """
         if not deck_id:
             print("✗ Cannot save deck: no deck_id")
+            return False
+        
+        # CRITICAL: Convert anki_deck_id to integer
+        try:
+            anki_deck_id = int(anki_deck_id)
+        except (ValueError, TypeError) as e:
+            print(f"✗ Cannot save deck: invalid anki_deck_id {anki_deck_id} ({e})")
             return False
         
         # CRITICAL: Verify the deck exists in Anki before saving
@@ -191,7 +201,7 @@ class Config:
         
         cfg['downloaded_decks'][deck_id] = {
             'version': version,
-            'anki_deck_id': anki_deck_id,
+            'anki_deck_id': anki_deck_id,  # Now guaranteed to be int
             'downloaded_at': datetime.now().isoformat()
         }
         
@@ -214,7 +224,10 @@ class Config:
         return result
     
     def is_deck_downloaded(self, deck_id):
-        """Check if a deck is downloaded AND still exists in Anki"""
+        """
+        Check if a deck is downloaded AND still exists in Anki
+        FIXED: Handles integer anki_deck_id properly
+        """
         if not deck_id:
             return False
         
@@ -225,6 +238,13 @@ class Config:
         # Verify the deck still exists in Anki
         anki_deck_id = downloaded_decks[deck_id].get('anki_deck_id')
         if not anki_deck_id:
+            return False
+        
+        # Convert to int if needed
+        try:
+            anki_deck_id = int(anki_deck_id)
+        except (ValueError, TypeError):
+            print(f"✗ Invalid anki_deck_id for {deck_id}: {anki_deck_id}")
             return False
         
         return self._verify_deck_exists(anki_deck_id)
@@ -239,13 +259,25 @@ class Config:
         return deck_info.get('version')
     
     def get_deck_anki_id(self, deck_id):
-        """Get the Anki deck ID for a downloaded deck"""
+        """
+        Get the Anki deck ID for a downloaded deck
+        FIXED: Returns integer ID
+        """
         if not deck_id:
             return None
         
         decks = self.get_downloaded_decks()
         deck_info = decks.get(deck_id, {})
-        return deck_info.get('anki_deck_id')
+        anki_deck_id = deck_info.get('anki_deck_id')
+        
+        if anki_deck_id:
+            try:
+                return int(anki_deck_id)
+            except (ValueError, TypeError):
+                print(f"✗ Invalid anki_deck_id: {anki_deck_id}")
+                return None
+        
+        return None
     
     def remove_downloaded_deck(self, deck_id):
         """Remove a deck from tracking"""
@@ -284,12 +316,19 @@ class Config:
         return success
     
     def _verify_deck_exists(self, anki_deck_id):
-        """Verify that a deck exists in Anki's collection"""
+        """
+        Verify that a deck exists in Anki's collection
+        FIXED: Properly handles integer deck IDs
+        """
         try:
             if not mw or not mw.col:
                 print(f"⚠ Cannot verify deck {anki_deck_id}: collection not available")
                 return False
             
+            # Ensure we're working with an integer
+            anki_deck_id = int(anki_deck_id)
+            
+            # Get the deck by integer ID
             deck = mw.col.decks.get(anki_deck_id)
             exists = deck is not None
             
@@ -297,6 +336,9 @@ class Config:
                 print(f"✗ Deck {anki_deck_id} does not exist in Anki")
             
             return exists
+        except (ValueError, TypeError) as e:
+            print(f"✗ Invalid deck ID {anki_deck_id}: {e}")
+            return False
         except Exception as e:
             print(f"✗ Error verifying deck {anki_deck_id}: {e}")
             return False
@@ -319,6 +361,14 @@ class Config:
             
             if not anki_deck_id:
                 print(f"  Deck {deck_id}: No Anki ID → mark for removal")
+                decks_to_remove.append(deck_id)
+                continue
+            
+            # Convert to int
+            try:
+                anki_deck_id = int(anki_deck_id)
+            except (ValueError, TypeError):
+                print(f"  Deck {deck_id}: Invalid Anki ID {anki_deck_id} → mark for removal")
                 decks_to_remove.append(deck_id)
                 continue
             
