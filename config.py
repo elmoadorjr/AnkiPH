@@ -1,20 +1,17 @@
 """
 Configuration management for the Nottorney addon
-Handles storing and retrieving tokens, settings, etc.
-IMPROVED VERSION with better cache handling
+FIXED VERSION - Better deck tracking and cleanup
 """
 
 from aqt import mw
 from datetime import datetime
 import json
-import os
 
 
 class Config:
     """Manages addon configuration and authentication state"""
     
     def __init__(self):
-        # Use the package name from manifest.json
         self.addon_name = "Nottorney_Addon"
         self._config_cache = None
         self._cache_timestamp = 0
@@ -58,63 +55,45 @@ class Config:
     def _save_config(self, data):
         """Save the addon config to Anki"""
         try:
-            # CRITICAL: Make a deep copy to avoid reference issues
+            # Make a deep copy to avoid reference issues
             data_to_save = json.loads(json.dumps(data))
             
             mw.addonManager.writeConfig(self.addon_name, data_to_save)
             
-            # CRITICAL: Invalidate cache after save
+            # Invalidate cache after save
             self._config_cache = None
             self._cache_timestamp = 0
             
-            print(f"✓ Config saved successfully for {self.addon_name}")
+            print(f"✓ Config saved successfully")
             return True
         except Exception as e:
-            print(f"✗ ERROR: Failed to save config for {self.addon_name}: {e}")
-            
-            # Clear cache on save failure
+            print(f"✗ ERROR: Failed to save config: {e}")
             self._config_cache = None
             self._cache_timestamp = 0
-            
             return False
     
     def _invalidate_cache(self):
         """Invalidate the config cache"""
         self._config_cache = None
         self._cache_timestamp = 0
-        print("Cache invalidated")
     
-    # === UI MODE PREFERENCE ===
+    # === UI MODE ===
     
     def get_ui_mode(self):
-        """
-        Get the user's preferred UI mode
-        Returns: "minimal" or "classic"
-        """
+        """Get the user's preferred UI mode"""
         mode = self._get_config().get('ui_mode', 'minimal')
         if mode not in ['minimal', 'classic']:
             mode = 'minimal'
         return mode
     
     def set_ui_mode(self, mode):
-        """
-        Set the user's preferred UI mode
-        Args:
-            mode: "minimal" or "classic"
-        """
+        """Set the user's preferred UI mode"""
         if mode not in ['minimal', 'classic']:
-            print(f"Warning: Invalid UI mode '{mode}', using 'minimal'")
             mode = 'minimal'
         
         cfg = self._get_config()
         cfg['ui_mode'] = mode
-        
-        success = self._save_config(cfg)
-        
-        if success:
-            print(f"UI mode set to: {mode}")
-        
-        return success
+        return self._save_config(cfg)
     
     # === AUTHENTICATION ===
     
@@ -126,33 +105,17 @@ class Config:
         cfg['expires_at'] = expires_at
         
         success = self._save_config(cfg)
-        
         if success:
             print(f"Tokens saved: expires_at={expires_at}")
-            
-            # Calculate and log expiry time
-            if expires_at:
-                try:
-                    expiry_time = datetime.fromtimestamp(expires_at)
-                    current_time = datetime.now()
-                    time_until_expiry = expiry_time - current_time
-                    print(f"Token will expire in {time_until_expiry}")
-                except:
-                    pass
-        else:
-            print("WARNING: Tokens may not have been saved properly")
-        
         return success
     
     def get_access_token(self):
         """Get the current access token"""
-        token = self._get_config().get('access_token')
-        return token
+        return self._get_config().get('access_token')
     
     def get_refresh_token(self):
         """Get the current refresh token"""
-        token = self._get_config().get('refresh_token')
-        return token
+        return self._get_config().get('refresh_token')
     
     def get_token_expiry(self):
         """Get the token expiration timestamp"""
@@ -161,27 +124,12 @@ class Config:
     def is_token_expired(self):
         """Check if the access token is expired"""
         expires_at = self.get_token_expiry()
-        
         if not expires_at:
             return True
         
-        # Add 5 minute buffer to avoid edge cases
         current_time = datetime.now().timestamp()
         buffer_seconds = 300  # 5 minutes
-        
-        is_expired = current_time >= (expires_at - buffer_seconds)
-        
-        return is_expired
-    
-    def get_token_time_remaining(self):
-        """Get the time remaining before token expires (in seconds)"""
-        expires_at = self.get_token_expiry()
-        
-        if not expires_at:
-            return 0
-        
-        current_time = datetime.now().timestamp()
-        return max(0, expires_at - current_time)
+        return current_time >= (expires_at - buffer_seconds)
     
     def clear_tokens(self):
         """Clear all authentication tokens"""
@@ -192,37 +140,24 @@ class Config:
         cfg['user'] = None
         
         success = self._save_config(cfg)
-        
         if success:
             print("Tokens cleared successfully")
-        else:
-            print("WARNING: Tokens may not have been cleared properly")
-        
         return success
     
     def is_logged_in(self):
         """Check if user is logged in with a valid token"""
-        has_token = bool(self.get_access_token())
-        return has_token
+        return bool(self.get_access_token())
     
     # === USER DATA ===
     
     def save_user(self, user_data):
         """Save user information"""
         if not user_data:
-            print("Warning: Attempting to save null user data")
             return False
         
         cfg = self._get_config()
         cfg['user'] = user_data
-        
-        success = self._save_config(cfg)
-        
-        if success:
-            email = user_data.get('email', 'unknown')
-            print(f"User saved: {email}")
-        
-        return success
+        return self._save_config(cfg)
     
     def get_user(self):
         """Get saved user information"""
@@ -234,27 +169,19 @@ class Config:
         """Get the API base URL"""
         url = self._get_config().get('api_url', 
             'https://ladvckxztcleljbiomcf.supabase.co/functions/v1')
-        
-        # Remove trailing slash if present
         return url.rstrip('/')
     
-    def set_api_url(self, url):
-        """Set the API base URL"""
-        if not url:
-            print("Warning: Attempting to set empty API URL")
-            return False
-        
-        cfg = self._get_config()
-        cfg['api_url'] = url.rstrip('/')
-        
-        return self._save_config(cfg)
-    
-    # === DOWNLOADED DECKS TRACKING ===
+    # === DOWNLOADED DECKS TRACKING - FIXED ===
     
     def save_downloaded_deck(self, deck_id, version, anki_deck_id):
         """Track a downloaded deck"""
         if not deck_id:
-            print("Warning: Attempting to save deck with no ID")
+            print("✗ Cannot save deck: no deck_id")
+            return False
+        
+        # CRITICAL: Verify the deck exists in Anki before saving
+        if not self._verify_deck_exists(anki_deck_id):
+            print(f"✗ Cannot save deck: Anki deck {anki_deck_id} does not exist")
             return False
         
         cfg = self._get_config()
@@ -271,7 +198,7 @@ class Config:
         success = self._save_config(cfg)
         
         if success:
-            print(f"✓ Saved downloaded deck: {deck_id} v{version}")
+            print(f"✓ Saved deck: {deck_id} v{version} (Anki ID: {anki_deck_id})")
         else:
             print(f"✗ Failed to save deck: {deck_id}")
         
@@ -279,19 +206,28 @@ class Config:
     
     def get_downloaded_decks(self):
         """Get dictionary of downloaded decks"""
-        # ALWAYS get fresh data
+        # Always get fresh data
         self._invalidate_cache()
         decks = self._get_config().get('downloaded_decks', {})
         result = decks if isinstance(decks, dict) else {}
-        print(f"Retrieved {len(result)} downloaded deck(s) from config")
+        print(f"Retrieved {len(result)} tracked deck(s)")
         return result
     
     def is_deck_downloaded(self, deck_id):
-        """Check if a deck is already downloaded"""
+        """Check if a deck is downloaded AND still exists in Anki"""
         if not deck_id:
             return False
         
-        return deck_id in self.get_downloaded_decks()
+        downloaded_decks = self.get_downloaded_decks()
+        if deck_id not in downloaded_decks:
+            return False
+        
+        # Verify the deck still exists in Anki
+        anki_deck_id = downloaded_decks[deck_id].get('anki_deck_id')
+        if not anki_deck_id:
+            return False
+        
+        return self._verify_deck_exists(anki_deck_id)
     
     def get_deck_version(self, deck_id):
         """Get the version of a downloaded deck"""
@@ -312,69 +248,95 @@ class Config:
         return deck_info.get('anki_deck_id')
     
     def remove_downloaded_deck(self, deck_id):
-        """Remove a deck from the downloaded decks list"""
+        """Remove a deck from tracking"""
         if not deck_id:
-            print(f"✗ Cannot remove deck: no deck_id provided")
+            print(f"✗ Cannot remove deck: no deck_id")
             return False
         
-        print(f"Attempting to remove deck: {deck_id}")
+        print(f"Removing deck from tracking: {deck_id}")
         
         # Get fresh config
         self._invalidate_cache()
         cfg = self._get_config()
         
-        if 'downloaded_decks' not in cfg:
-            print(f"✓ No downloaded_decks in config (already empty)")
-            return True
-        
-        if deck_id not in cfg['downloaded_decks']:
-            print(f"✓ Deck {deck_id} not in tracking (already removed)")
+        if 'downloaded_decks' not in cfg or deck_id not in cfg['downloaded_decks']:
+            print(f"✓ Deck {deck_id} not tracked (already removed)")
             return True
         
         # Remove the deck
         del cfg['downloaded_decks'][deck_id]
-        print(f"Removed deck {deck_id} from memory, now saving...")
         
         # Save changes
         success = self._save_config(cfg)
         
         if success:
-            print(f"✓ Successfully removed deck from tracking: {deck_id}")
+            print(f"✓ Removed deck: {deck_id}")
             
-            # Verify it's really gone
+            # Verify removal
             self._invalidate_cache()
             verification = self._get_config().get('downloaded_decks', {})
             if deck_id in verification:
-                print(f"✗ WARNING: Deck {deck_id} still in config after save!")
+                print(f"✗ WARNING: Deck {deck_id} still present after removal!")
                 return False
-            else:
-                print(f"✓ Verified: Deck {deck_id} successfully removed")
         else:
-            print(f"✗ Failed to save after removing deck: {deck_id}")
+            print(f"✗ Failed to remove deck: {deck_id}")
         
         return success
     
-    # === AUTO-SYNC SETTINGS ===
+    def _verify_deck_exists(self, anki_deck_id):
+        """Verify that a deck exists in Anki's collection"""
+        try:
+            if not mw or not mw.col:
+                print(f"⚠ Cannot verify deck {anki_deck_id}: collection not available")
+                return False
+            
+            deck = mw.col.decks.get(anki_deck_id)
+            exists = deck is not None
+            
+            if not exists:
+                print(f"✗ Deck {anki_deck_id} does not exist in Anki")
+            
+            return exists
+        except Exception as e:
+            print(f"✗ Error verifying deck {anki_deck_id}: {e}")
+            return False
     
-    def get_auto_sync_enabled(self):
-        """Check if auto-sync is enabled"""
-        return self._get_config().get('auto_sync_enabled', True)
-    
-    def set_auto_sync_enabled(self, enabled):
-        """Enable or disable auto-sync"""
-        cfg = self._get_config()
-        cfg['auto_sync_enabled'] = bool(enabled)
-        return self._save_config(cfg)
-    
-    def get_auto_sync_interval(self):
-        """Get auto-sync interval in hours"""
-        return self._get_config().get('auto_sync_interval_hours', 1)
-    
-    def set_auto_sync_interval(self, hours):
-        """Set auto-sync interval in hours"""
-        cfg = self._get_config()
-        cfg['auto_sync_interval_hours'] = max(1, int(hours))
-        return self._save_config(cfg)
+    def cleanup_deleted_decks(self):
+        """
+        Remove all deck tracking for decks that no longer exist in Anki
+        Returns: (cleaned_count, total_tracked)
+        """
+        print("\n=== Cleaning up deleted decks ===")
+        
+        downloaded_decks = self.get_downloaded_decks()
+        total_tracked = len(downloaded_decks)
+        decks_to_remove = []
+        
+        print(f"Checking {total_tracked} tracked deck(s)...")
+        
+        for deck_id, deck_info in downloaded_decks.items():
+            anki_deck_id = deck_info.get('anki_deck_id')
+            
+            if not anki_deck_id:
+                print(f"  Deck {deck_id}: No Anki ID → mark for removal")
+                decks_to_remove.append(deck_id)
+                continue
+            
+            if not self._verify_deck_exists(anki_deck_id):
+                print(f"  Deck {deck_id} (Anki {anki_deck_id}): Not found → mark for removal")
+                decks_to_remove.append(deck_id)
+            else:
+                print(f"  Deck {deck_id} (Anki {anki_deck_id}): ✓ Exists")
+        
+        # Remove all marked decks
+        cleaned_count = 0
+        for deck_id in decks_to_remove:
+            if self.remove_downloaded_deck(deck_id):
+                cleaned_count += 1
+        
+        print(f"\n=== Cleanup complete: {cleaned_count}/{len(decks_to_remove)} removed ===\n")
+        
+        return (cleaned_count, total_tracked)
 
 
 # Global config instance
