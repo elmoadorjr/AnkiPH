@@ -1,7 +1,7 @@
 """
 Configuration management for the Nottorney addon
 Handles storing and retrieving tokens, settings, etc.
-NOW WITH UI MODE PREFERENCE SUPPORT
+IMPROVED VERSION with better cache handling
 """
 
 from aqt import mw
@@ -52,22 +52,25 @@ class Config:
             "refresh_token": None,
             "expires_at": None,
             "user": None,
-            "ui_mode": "minimal"  # NEW: "minimal" or "classic"
+            "ui_mode": "minimal"
         }
     
     def _save_config(self, data):
         """Save the addon config to Anki"""
         try:
-            mw.addonManager.writeConfig(self.addon_name, data)
+            # CRITICAL: Make a deep copy to avoid reference issues
+            data_to_save = json.loads(json.dumps(data))
             
-            # Update cache
-            self._config_cache = data.copy()
-            self._cache_timestamp = datetime.now().timestamp()
+            mw.addonManager.writeConfig(self.addon_name, data_to_save)
             
-            print(f"Config saved successfully for {self.addon_name}")
+            # CRITICAL: Invalidate cache after save
+            self._config_cache = None
+            self._cache_timestamp = 0
+            
+            print(f"✓ Config saved successfully for {self.addon_name}")
             return True
         except Exception as e:
-            print(f"ERROR: Failed to save config for {self.addon_name}: {e}")
+            print(f"✗ ERROR: Failed to save config for {self.addon_name}: {e}")
             
             # Clear cache on save failure
             self._config_cache = None
@@ -79,8 +82,9 @@ class Config:
         """Invalidate the config cache"""
         self._config_cache = None
         self._cache_timestamp = 0
+        print("Cache invalidated")
     
-    # === UI MODE PREFERENCE (NEW) ===
+    # === UI MODE PREFERENCE ===
     
     def get_ui_mode(self):
         """
@@ -267,14 +271,20 @@ class Config:
         success = self._save_config(cfg)
         
         if success:
-            print(f"Saved downloaded deck: {deck_id} v{version}")
+            print(f"✓ Saved downloaded deck: {deck_id} v{version}")
+        else:
+            print(f"✗ Failed to save deck: {deck_id}")
         
         return success
     
     def get_downloaded_decks(self):
         """Get dictionary of downloaded decks"""
+        # ALWAYS get fresh data
+        self._invalidate_cache()
         decks = self._get_config().get('downloaded_decks', {})
-        return decks if isinstance(decks, dict) else {}
+        result = decks if isinstance(decks, dict) else {}
+        print(f"Retrieved {len(result)} downloaded deck(s) from config")
+        return result
     
     def is_deck_downloaded(self, deck_id):
         """Check if a deck is already downloaded"""
@@ -304,23 +314,45 @@ class Config:
     def remove_downloaded_deck(self, deck_id):
         """Remove a deck from the downloaded decks list"""
         if not deck_id:
+            print(f"✗ Cannot remove deck: no deck_id provided")
             return False
         
+        print(f"Attempting to remove deck: {deck_id}")
+        
+        # Get fresh config
+        self._invalidate_cache()
         cfg = self._get_config()
         
         if 'downloaded_decks' not in cfg:
+            print(f"✓ No downloaded_decks in config (already empty)")
             return True
         
-        if deck_id in cfg['downloaded_decks']:
-            del cfg['downloaded_decks'][deck_id]
-            success = self._save_config(cfg)
-            
-            if success:
-                print(f"Removed deck from tracking: {deck_id}")
-            
-            return success
+        if deck_id not in cfg['downloaded_decks']:
+            print(f"✓ Deck {deck_id} not in tracking (already removed)")
+            return True
         
-        return True
+        # Remove the deck
+        del cfg['downloaded_decks'][deck_id]
+        print(f"Removed deck {deck_id} from memory, now saving...")
+        
+        # Save changes
+        success = self._save_config(cfg)
+        
+        if success:
+            print(f"✓ Successfully removed deck from tracking: {deck_id}")
+            
+            # Verify it's really gone
+            self._invalidate_cache()
+            verification = self._get_config().get('downloaded_decks', {})
+            if deck_id in verification:
+                print(f"✗ WARNING: Deck {deck_id} still in config after save!")
+                return False
+            else:
+                print(f"✓ Verified: Deck {deck_id} successfully removed")
+        else:
+            print(f"✗ Failed to save after removing deck: {deck_id}")
+        
+        return success
     
     # === AUTO-SYNC SETTINGS ===
     

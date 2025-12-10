@@ -433,22 +433,29 @@ class MinimalNottorneyDialog(QDialog):
             # Clean up deleted decks first
             self.log("Checking for deleted decks...")
             deleted_count = 0
-            decks_to_remove = []
             
-            for deck_id, deck_info in downloaded_decks.items():
+            # Get a fresh copy to iterate over
+            decks_snapshot = list(downloaded_decks.items())
+            
+            for deck_id, deck_info in decks_snapshot:
                 anki_deck_id = deck_info.get('anki_deck_id')
-                if anki_deck_id and not self.deck_exists_in_anki(anki_deck_id):
-                    decks_to_remove.append(deck_id)
-                    deleted_count += 1
-            
-            for deck_id in decks_to_remove:
-                config.remove_downloaded_deck(deck_id)
-                self.log(f"Removed deleted deck from tracking: {deck_id}")
+                if anki_deck_id:
+                    if not self.deck_exists_in_anki(anki_deck_id):
+                        self.log(f"Deck no longer exists in Anki: {deck_id} (Anki ID: {anki_deck_id})")
+                        success = config.remove_downloaded_deck(deck_id)
+                        if success:
+                            deleted_count += 1
+                            self.log(f"✓ Removed from tracking: {deck_id}")
+                        else:
+                            self.log(f"✗ Failed to remove: {deck_id}")
             
             if deleted_count > 0:
-                self.log(f"Cleaned up {deleted_count} deleted deck(s)")
-                # Reload after cleanup
+                self.log(f"✓ Cleaned up {deleted_count} deleted deck(s)")
+                # Reload config after cleanup
                 downloaded_decks = config.get_downloaded_decks()
+                self.log(f"Remaining tracked decks: {len(downloaded_decks)}")
+            else:
+                self.log("No deleted decks found")
             
             # Count new and updated decks
             new = 0
@@ -679,10 +686,17 @@ class MinimalNottorneyDialog(QDialog):
     def deck_exists_in_anki(self, anki_deck_id):
         """Check if a deck still exists in Anki"""
         try:
-            if not mw.col:
+            if not mw or not mw.col:
+                self.log(f"Warning: Anki collection not available for deck check")
                 return False
+            
             deck = mw.col.decks.get(anki_deck_id)
-            return deck is not None
+            exists = deck is not None
+            
+            if not exists:
+                self.log(f"Deck {anki_deck_id} does not exist in Anki")
+            
+            return exists
         except Exception as e:
             self.log(f"Error checking deck {anki_deck_id}: {e}")
             return False
