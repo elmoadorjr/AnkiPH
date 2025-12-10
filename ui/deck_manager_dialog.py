@@ -1,12 +1,12 @@
 """
-Deck manager dialog UI for the Nottorney addon - DEBUG VERSION
-Shows purchased decks and allows downloading them
+Deck manager dialog UI for the Nottorney addon
+Shows purchased decks with update checking and allows downloading them
 """
 
 from aqt.qt import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QListWidget, QListWidgetItem, QMessageBox,
-    QProgressDialog, Qt, QTextEdit
+    QProgressDialog, Qt, QTextEdit, QCheckBox
 )
 from aqt import mw
 from ..api_client import api, NottorneyAPIError
@@ -22,8 +22,9 @@ class DeckManagerDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Nottorney Deck Manager")
-        self.setMinimumSize(700, 600)  # Increased height for debug log
+        self.setMinimumSize(750, 650)
         self.decks = []
+        self.show_updates_only = False
         self.setup_ui()
         self.load_decks()
     
@@ -44,6 +45,19 @@ class DeckManagerDialog(QDialog):
         # Info label
         self.info_label = QLabel("Loading decks...")
         layout.addWidget(self.info_label)
+        
+        # Filter controls
+        filter_layout = QHBoxLayout()
+        self.updates_checkbox = QCheckBox("Show updates only")
+        self.updates_checkbox.stateChanged.connect(self.filter_decks)
+        filter_layout.addWidget(self.updates_checkbox)
+        filter_layout.addStretch()
+        
+        self.check_updates_button = QPushButton("Check for Updates")
+        self.check_updates_button.clicked.connect(self.check_for_updates)
+        filter_layout.addWidget(self.check_updates_button)
+        
+        layout.addLayout(filter_layout)
         
         # Deck list with better formatting
         self.deck_list = QListWidget()
@@ -66,14 +80,14 @@ class DeckManagerDialog(QDialog):
         self.details_label.setStyleSheet("padding: 10px; background-color: #f5f5f5; border-radius: 5px;")
         layout.addWidget(self.details_label)
         
-        # DEBUG LOG
+        # DEBUG LOG (collapsible)
         debug_label = QLabel("<b>Debug Log:</b>")
         layout.addWidget(debug_label)
         
         self.debug_log = QTextEdit()
         self.debug_log.setReadOnly(True)
-        self.debug_log.setMaximumHeight(150)
-        self.debug_log.setStyleSheet("background-color: #f0f0f0; font-family: monospace; font-size: 10px;")
+        self.debug_log.setMaximumHeight(120)
+        self.debug_log.setStyleSheet("background-color: #f0f0f0; font-family: monospace; font-size: 9px;")
         layout.addWidget(self.debug_log)
         
         # Buttons
@@ -83,7 +97,7 @@ class DeckManagerDialog(QDialog):
         self.download_button.clicked.connect(self.download_selected_deck)
         self.download_button.setEnabled(False)
         
-        self.refresh_button = QPushButton("Refresh")
+        self.refresh_button = QPushButton("Refresh List")
         self.refresh_button.clicked.connect(self.load_decks)
         
         close_button = QPushButton("Close")
@@ -115,13 +129,58 @@ class DeckManagerDialog(QDialog):
                 deck.get('latest_version') or
                 '1.0')
     
+    def check_for_updates(self):
+        """Check for updates on all decks"""
+        self.check_updates_button.setEnabled(False)
+        self.info_label.setText("Checking for updates...")
+        
+        try:
+            self.log("\n=== Checking for updates ===")
+            result = api.check_updates()
+            
+            updates_available = result.get('updates_available', 0)
+            total_decks = result.get('total_decks', 0)
+            
+            if updates_available > 0:
+                self.info_label.setText(f"Found {updates_available} update(s) available!")
+                QMessageBox.information(
+                    self,
+                    "Updates Available",
+                    f"{updates_available} deck update(s) available out of {total_decks} decks.\n\n"
+                    "Check 'Show updates only' to see them."
+                )
+            else:
+                self.info_label.setText(f"All {total_decks} decks are up to date!")
+                QMessageBox.information(
+                    self,
+                    "No Updates",
+                    f"All your {total_decks} decks are up to date!"
+                )
+            
+            # Refresh the deck list
+            self.load_decks()
+            
+        except NottorneyAPIError as e:
+            self.log(f"Update check error: {str(e)}")
+            QMessageBox.warning(self, "Error", f"Failed to check for updates:\n\n{str(e)}")
+        except Exception as e:
+            self.log(f"Unexpected error: {str(e)}\n{traceback.format_exc()}")
+            QMessageBox.critical(self, "Error", f"Unexpected error:\n\n{str(e)}")
+        finally:
+            self.check_updates_button.setEnabled(True)
+    
+    def filter_decks(self):
+        """Filter the deck list based on checkbox state"""
+        self.show_updates_only = self.updates_checkbox.isChecked()
+        self.populate_deck_list()
+    
     def load_decks(self):
         """Load purchased decks from the API"""
         self.info_label.setText("Loading decks...")
         self.deck_list.clear()
         self.details_label.setText("")
-        self.debug_log.clear()
         self.refresh_button.setEnabled(False)
+        self.check_updates_button.setEnabled(False)
         self.download_button.setEnabled(False)
         
         try:
@@ -139,43 +198,8 @@ class DeckManagerDialog(QDialog):
             # Log first deck structure
             if self.decks:
                 self.log(f"\nFirst deck fields: {list(self.decks[0].keys())}")
-                self.log(f"First deck sample: {json.dumps(self.decks[0], indent=2)[:300]}...")
             
-            # Add decks to list
-            for i, deck in enumerate(self.decks):
-                item = QListWidgetItem()
-                
-                deck_title = deck.get('title', 'Unknown Deck')
-                deck_subject = deck.get('subject', 'N/A')
-                deck_version = self.get_deck_version(deck)
-                card_count = deck.get('card_count', 0)
-                deck_id = self.get_deck_id(deck)
-                
-                if not deck_id:
-                    self.log(f"WARNING: Deck {i+1} has no ID!")
-                    continue
-                
-                is_downloaded = config.is_deck_downloaded(deck_id)
-                downloaded_version = config.get_deck_version(deck_id) if is_downloaded else None
-                
-                status_icon = "✓" if is_downloaded else "○"
-                version_text = f"v{deck_version}"
-                
-                if is_downloaded:
-                    if downloaded_version != deck_version:
-                        version_text = f"v{downloaded_version} → v{deck_version} (Update)"
-                        status_icon = "⟳"
-                    else:
-                        version_text = f"v{deck_version} (Downloaded)"
-                
-                display_text = f"{status_icon} {deck_title}\n   {deck_subject} • {card_count} cards • {version_text}"
-                
-                item.setText(display_text)
-                item.setData(Qt.ItemDataRole.UserRole, deck)
-                
-                self.deck_list.addItem(item)
-            
-            self.log(f"\nSuccessfully loaded {self.deck_list.count()} decks into list")
+            self.populate_deck_list()
         
         except NottorneyAPIError as e:
             error_msg = str(e)
@@ -196,6 +220,65 @@ class DeckManagerDialog(QDialog):
         
         finally:
             self.refresh_button.setEnabled(True)
+            self.check_updates_button.setEnabled(True)
+    
+    def populate_deck_list(self):
+        """Populate the deck list widget"""
+        self.deck_list.clear()
+        
+        if not self.decks:
+            return
+        
+        displayed_count = 0
+        
+        for i, deck in enumerate(self.decks):
+            deck_id = self.get_deck_id(deck)
+            
+            if not deck_id:
+                self.log(f"WARNING: Deck {i+1} has no ID!")
+                continue
+            
+            deck_title = deck.get('title', 'Unknown Deck')
+            deck_subject = deck.get('subject', 'N/A')
+            deck_version = self.get_deck_version(deck)
+            card_count = deck.get('card_count', 0)
+            
+            is_downloaded = config.is_deck_downloaded(deck_id)
+            downloaded_version = config.get_deck_version(deck_id) if is_downloaded else None
+            
+            has_update = False
+            if is_downloaded and downloaded_version != deck_version:
+                has_update = True
+            
+            # Filter by updates if checkbox is checked
+            if self.show_updates_only and not has_update:
+                continue
+            
+            status_icon = "✓" if is_downloaded else "○"
+            version_text = f"v{deck_version}"
+            
+            if is_downloaded:
+                if has_update:
+                    version_text = f"v{downloaded_version} → v{deck_version} (Update Available)"
+                    status_icon = "⟳"
+                else:
+                    version_text = f"v{deck_version} (Downloaded)"
+            
+            display_text = f"{status_icon} {deck_title}\n   {deck_subject} • {card_count} cards • {version_text}"
+            
+            item = QListWidgetItem()
+            item.setText(display_text)
+            item.setData(Qt.ItemDataRole.UserRole, deck)
+            
+            self.deck_list.addItem(item)
+            displayed_count += 1
+        
+        if self.show_updates_only:
+            self.info_label.setText(f"Showing {displayed_count} deck(s) with updates")
+        else:
+            self.info_label.setText(f"Showing all {displayed_count} deck(s)")
+        
+        self.log(f"\nDisplayed {displayed_count} decks in list")
     
     def on_selection_changed(self):
         """Handle deck selection change"""
@@ -225,7 +308,10 @@ class DeckManagerDialog(QDialog):
         
         if is_downloaded:
             downloaded_version = config.get_deck_version(deck_id)
-            details += f"<span style='color: green;'>Downloaded: v{downloaded_version}</span>"
+            if downloaded_version != deck_version:
+                details += f"<span style='color: #ff9800;'><b>Update Available:</b> v{downloaded_version} → v{deck_version}</span>"
+            else:
+                details += f"<span style='color: green;'>Downloaded: v{downloaded_version} (Up to date)</span>"
         
         self.details_label.setText(details)
     
@@ -246,7 +332,6 @@ class DeckManagerDialog(QDialog):
         self.log(f"Deck Title: {deck_title}")
         self.log(f"Deck ID: {deck_id}")
         self.log(f"Deck Version: {deck_version}")
-        self.log(f"All deck fields: {list(deck.keys())}")
         
         if not deck_id:
             error_msg = f"Missing deck ID! Fields available: {list(deck.keys())}"
@@ -260,7 +345,15 @@ class DeckManagerDialog(QDialog):
             if downloaded_version == deck_version:
                 reply = QMessageBox.question(
                     self, "Already Downloaded",
-                    f"Already have v{downloaded_version}. Re-download?",
+                    f"You already have v{downloaded_version}. Re-download?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                )
+                if reply == QMessageBox.StandardButton.No:
+                    return
+            else:
+                reply = QMessageBox.question(
+                    self, "Update Available",
+                    f"Update from v{downloaded_version} to v{deck_version}?",
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
                 )
                 if reply == QMessageBox.StandardButton.No:
@@ -282,13 +375,13 @@ class DeckManagerDialog(QDialog):
             
             # Try without version first
             try:
-                self.log(f"  Attempt 1: download_deck('{deck_id}', version=None)")
+                self.log(f"  Attempt: download_deck('{deck_id}', version=None)")
                 download_info = api.download_deck(deck_id, version=None)
                 self.log(f"  SUCCESS: {download_info}")
             except NottorneyAPIError as e:
                 self.log(f"  FAILED: {str(e)}")
                 if "version" in str(e).lower():
-                    self.log(f"  Attempt 2: download_deck('{deck_id}', version='{deck_version}')")
+                    self.log(f"  Retry: download_deck('{deck_id}', version='{deck_version}')")
                     download_info = api.download_deck(deck_id, version=deck_version)
                     self.log(f"  SUCCESS: {download_info}")
                 else:

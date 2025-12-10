@@ -216,6 +216,33 @@ class NottorneyAPI:
         
         raise NottorneyAPIError(result.get('error', 'Failed to get purchased decks'))
     
+    def check_updates(self) -> Dict:
+        """
+        Check for updates on all purchased decks
+        Returns: {
+            "success": true,
+            "decks": [{
+                "deck_id": "uuid",
+                "title": "Deck Name",
+                "current_version": "2.0",
+                "synced_version": "1.0",
+                "has_update": true,
+                ...
+            }],
+            "updates_available": 3,
+            "total_decks": 11
+        }
+        """
+        result = self._make_request('POST', '/addon-check-updates', data={}, include_auth=True)
+        
+        if result.get('success'):
+            updates_count = result.get('updates_available', 0)
+            total = result.get('total_decks', 0)
+            print(f"Update check: {updates_count} updates available out of {total} decks")
+            return result
+        
+        raise NottorneyAPIError(result.get('error', 'Failed to check for updates'))
+    
     def download_deck(self, deck_id: str, version: Optional[str] = None) -> Dict:
         """
         Get download URL for a deck
