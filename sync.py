@@ -35,6 +35,12 @@ def get_progress_data() -> list:
         # Get review statistics from the last 30 days
         review_stats = get_review_stats_for_deck(anki_deck_id, days=30)
         
+        # Calculate retention rate
+        retention_rate = calculate_retention_rate(anki_deck_id)
+        
+        # Calculate current streak
+        current_streak = calculate_current_streak(anki_deck_id)
+        
         # Build progress data
         progress = {
             'deck_id': deck_id,
@@ -45,12 +51,133 @@ def get_progress_data() -> list:
             'average_ease': review_stats.get('average_ease', 0),
             'study_time_minutes': review_stats.get('study_time_minutes', 0),
             'last_study_date': review_stats.get('last_study_date'),
+            'retention_rate': retention_rate,
+            'current_streak_days': current_streak,
             'synced_at': datetime.now().isoformat()
         }
         
         progress_data.append(progress)
     
     return progress_data
+
+
+def calculate_retention_rate(deck_id: int) -> float:
+    """
+    Calculate retention rate for a deck based on review performance
+    
+    Retention rate = (Correct reviews / Total reviews) * 100
+    Only considers reviews from the last 30 days
+    
+    Args:
+        deck_id: The Anki deck ID
+    
+    Returns:
+        Retention rate as a percentage (0-100)
+    """
+    try:
+        # Calculate the timestamp for 30 days ago
+        cutoff_time = int((datetime.now() - timedelta(days=30)).timestamp() * 1000)
+        
+        # Get card IDs for the deck
+        card_ids = mw.col.decks.cids(deck_id, children=True)
+        
+        if not card_ids:
+            return 0.0
+        
+        # Query the review log
+        # ease >= 2 means the user answered "Good" (2), "Easy" (3), or "Again with success" (4)
+        # ease == 1 means "Again" (failed)
+        card_ids_str = ",".join(str(cid) for cid in card_ids)
+        
+        query = f"""
+            SELECT 
+                COUNT(*) as total_reviews,
+                SUM(CASE WHEN ease >= 2 THEN 1 ELSE 0 END) as correct_reviews
+            FROM revlog
+            WHERE cid IN ({card_ids_str})
+            AND id >= {cutoff_time}
+        """
+        
+        result = mw.col.db.first(query)
+        
+        if not result or result[0] == 0:
+            return 0.0
+        
+        total_reviews = result[0]
+        correct_reviews = result[1] or 0
+        
+        retention_rate = (correct_reviews / total_reviews) * 100
+        
+        return round(retention_rate, 2)
+    
+    except Exception as e:
+        print(f"Error calculating retention rate: {e}")
+        return 0.0
+
+
+def calculate_current_streak(deck_id: int) -> int:
+    """
+    Calculate the current study streak for a deck
+    
+    A streak is maintained if the user studied at least once per day.
+    The streak breaks if there's a day with no reviews.
+    
+    Args:
+        deck_id: The Anki deck ID
+    
+    Returns:
+        Number of consecutive days studied
+    """
+    try:
+        # Get card IDs for the deck
+        card_ids = mw.col.decks.cids(deck_id, children=True)
+        
+        if not card_ids:
+            return 0
+        
+        # Get all review dates, ordered from most recent
+        card_ids_str = ",".join(str(cid) for cid in card_ids)
+        
+        query = f"""
+            SELECT DISTINCT DATE(id / 1000, 'unixepoch', 'localtime') as review_date
+            FROM revlog
+            WHERE cid IN ({card_ids_str})
+            ORDER BY review_date DESC
+        """
+        
+        review_dates = mw.col.db.list(query)
+        
+        if not review_dates:
+            return 0
+        
+        # Convert to date objects
+        review_dates = [datetime.strptime(date_str, '%Y-%m-%d').date() for date_str in review_dates]
+        
+        # Check if user studied today or yesterday to count as active streak
+        today = datetime.now().date()
+        yesterday = today - timedelta(days=1)
+        
+        if review_dates[0] != today and review_dates[0] != yesterday:
+            # Streak is broken if last review was before yesterday
+            return 0
+        
+        # Count consecutive days
+        streak_days = 0
+        expected_date = today
+        
+        for review_date in review_dates:
+            if review_date == expected_date or review_date == expected_date - timedelta(days=1):
+                streak_days += 1
+                expected_date = review_date - timedelta(days=1)
+            else:
+                # Gap found, streak ends
+                break
+        
+        return streak_days
+    
+    except Exception as e:
+        print(f"Error calculating streak: {e}")
+        return 0
 
 
 def get_review_stats_for_deck(deck_id: int, days: int = 30) -> dict:
