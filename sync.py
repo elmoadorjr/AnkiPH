@@ -26,10 +26,21 @@ def get_progress_data() -> list:
         if not anki_deck_id:
             continue
         
+        # Check if deck still exists in Anki
+        try:
+            deck = mw.col.decks.get(anki_deck_id)
+            if not deck:
+                print(f"Deck {deck_id} (Anki ID: {anki_deck_id}) no longer exists, skipping...")
+                continue
+        except Exception as e:
+            print(f"Error checking deck {deck_id}: {e}, skipping...")
+            continue
+        
         # Get deck statistics
         stats = get_deck_stats(anki_deck_id)
         
         if not stats:
+            print(f"No stats for deck {deck_id}, skipping...")
             continue
         
         # Get review statistics from the last 30 days
@@ -57,6 +68,7 @@ def get_progress_data() -> list:
         }
         
         progress_data.append(progress)
+        print(f"Prepared progress data for deck {deck_id}")
     
     return progress_data
 
@@ -75,6 +87,11 @@ def calculate_retention_rate(deck_id: int) -> float:
         Retention rate as a percentage (0-100)
     """
     try:
+        # Check if deck exists first
+        deck = mw.col.decks.get(deck_id)
+        if not deck:
+            return 0.0
+        
         # Calculate the timestamp for 30 days ago
         cutoff_time = int((datetime.now() - timedelta(days=30)).timestamp() * 1000)
         
@@ -111,7 +128,7 @@ def calculate_retention_rate(deck_id: int) -> float:
         return round(retention_rate, 2)
     
     except Exception as e:
-        print(f"Error calculating retention rate: {e}")
+        print(f"Error calculating retention rate for deck {deck_id}: {e}")
         return 0.0
 
 
@@ -129,6 +146,11 @@ def calculate_current_streak(deck_id: int) -> int:
         Number of consecutive days studied
     """
     try:
+        # Check if deck exists first
+        deck = mw.col.decks.get(deck_id)
+        if not deck:
+            return 0
+        
         # Get card IDs for the deck
         card_ids = mw.col.decks.cids(deck_id, children=True)
         
@@ -176,7 +198,7 @@ def calculate_current_streak(deck_id: int) -> int:
         return streak_days
     
     except Exception as e:
-        print(f"Error calculating streak: {e}")
+        print(f"Error calculating streak for deck {deck_id}: {e}")
         return 0
 
 
@@ -192,6 +214,11 @@ def get_review_stats_for_deck(deck_id: int, days: int = 30) -> dict:
         Dictionary with review statistics
     """
     try:
+        # Check if deck exists first
+        deck = mw.col.decks.get(deck_id)
+        if not deck:
+            return {}
+        
         # Calculate the timestamp for X days ago
         cutoff_time = int((datetime.now() - timedelta(days=days)).timestamp() * 1000)
         
@@ -234,8 +261,40 @@ def get_review_stats_for_deck(deck_id: int, days: int = 30) -> dict:
             'last_study_date': last_study_date
         }
     except Exception as e:
-        print(f"Error getting review stats: {e}")
+        print(f"Error getting review stats for deck {deck_id}: {e}")
         return {}
+
+
+def clean_deleted_decks():
+    """
+    Remove tracking for decks that no longer exist in Anki
+    Returns the number of decks cleaned up
+    """
+    downloaded_decks = config.get_downloaded_decks()
+    decks_to_remove = []
+    
+    for deck_id, deck_info in downloaded_decks.items():
+        anki_deck_id = deck_info.get('anki_deck_id')
+        
+        if not anki_deck_id:
+            decks_to_remove.append(deck_id)
+            continue
+        
+        try:
+            deck = mw.col.decks.get(anki_deck_id)
+            if not deck:
+                decks_to_remove.append(deck_id)
+                print(f"Deck {deck_id} (Anki ID: {anki_deck_id}) marked for cleanup")
+        except Exception as e:
+            decks_to_remove.append(deck_id)
+            print(f"Deck {deck_id} error, marked for cleanup: {e}")
+    
+    # Remove the deleted decks from tracking
+    for deck_id in decks_to_remove:
+        config.remove_downloaded_deck(deck_id)
+        print(f"Removed deck {deck_id} from tracking")
+    
+    return len(decks_to_remove)
 
 
 def sync_progress():
@@ -244,6 +303,11 @@ def sync_progress():
     """
     if not config.is_logged_in():
         raise Exception("Not logged in")
+    
+    # First, clean up any deleted decks
+    cleaned = clean_deleted_decks()
+    if cleaned > 0:
+        print(f"Cleaned up {cleaned} deleted deck(s) from tracking")
     
     # Get progress data
     progress_data = get_progress_data()
