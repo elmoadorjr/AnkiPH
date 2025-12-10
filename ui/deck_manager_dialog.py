@@ -1,13 +1,13 @@
 """
 Enhanced Deck Manager Dialog for Nottorney Addon
-Features: Better UI, search, sorting, bulk operations, detailed stats
+Features: Clean UI, Basic/Advanced modes, better styling
 """
 
 from aqt.qt import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
     QListWidget, QListWidgetItem, QMessageBox, QProgressDialog,
     Qt, QTextEdit, QCheckBox, QLineEdit, QComboBox, QGroupBox,
-    QSplitter, QWidget, QScrollArea, QFrame
+    QSplitter, QWidget, QScrollArea, QFrame, QTabWidget
 )
 from aqt import mw
 from ..api_client import api, NottorneyAPIError
@@ -21,124 +21,385 @@ class DeckManagerDialog(QDialog):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Nottorney Deck Manager")
-        self.setMinimumSize(900, 700)
+        self.setWindowTitle("⚖️ Nottorney Deck Manager")
+        self.setMinimumSize(1000, 750)
         self.decks = []
         self.filtered_decks = []
         self.show_updates_only = False
         self.search_text = ""
         self.sort_by = "title"
+        self.advanced_mode = False
+        
+        # Apply modern stylesheet
+        self.setStyleSheet(self.get_stylesheet())
+        
         self.setup_ui()
         self.load_decks()
+    
+    def get_stylesheet(self):
+        """Return the modern stylesheet for the dialog"""
+        return """
+            QDialog {
+                background-color: #f8f9fa;
+            }
+            
+            QGroupBox {
+                background-color: white;
+                border: 1px solid #e0e0e0;
+                border-radius: 8px;
+                margin-top: 10px;
+                padding-top: 15px;
+                font-weight: bold;
+            }
+            
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 15px;
+                padding: 0 5px;
+                color: #2c3e50;
+            }
+            
+            QListWidget {
+                background-color: white;
+                border: 1px solid #e0e0e0;
+                border-radius: 8px;
+                padding: 5px;
+                outline: none;
+            }
+            
+            QListWidget::item {
+                padding: 15px;
+                border-bottom: 1px solid #f0f0f0;
+                border-radius: 6px;
+                margin: 2px;
+            }
+            
+            QListWidget::item:selected {
+                background-color: #e3f2fd;
+                color: #1976d2;
+                border: 2px solid #2196f3;
+            }
+            
+            QListWidget::item:hover {
+                background-color: #f5f5f5;
+            }
+            
+            QPushButton {
+                background-color: white;
+                border: 1px solid #d0d0d0;
+                border-radius: 6px;
+                padding: 8px 16px;
+                color: #2c3e50;
+                font-weight: 500;
+            }
+            
+            QPushButton:hover {
+                background-color: #f8f9fa;
+                border-color: #2196f3;
+            }
+            
+            QPushButton:pressed {
+                background-color: #e3f2fd;
+            }
+            
+            QPushButton:disabled {
+                background-color: #f0f0f0;
+                color: #999;
+                border-color: #e0e0e0;
+            }
+            
+            QPushButton#primaryButton {
+                background-color: #4caf50;
+                color: white;
+                border: none;
+                font-weight: bold;
+            }
+            
+            QPushButton#primaryButton:hover {
+                background-color: #45a049;
+            }
+            
+            QPushButton#primaryButton:disabled {
+                background-color: #cccccc;
+            }
+            
+            QPushButton#dangerButton {
+                background-color: #f44336;
+                color: white;
+                border: none;
+            }
+            
+            QPushButton#dangerButton:hover {
+                background-color: #da190b;
+            }
+            
+            QLineEdit, QComboBox {
+                background-color: white;
+                border: 1px solid #d0d0d0;
+                border-radius: 6px;
+                padding: 8px;
+                color: #2c3e50;
+            }
+            
+            QLineEdit:focus, QComboBox:focus {
+                border: 2px solid #2196f3;
+            }
+            
+            QLabel#headerLabel {
+                color: #2c3e50;
+                font-size: 24px;
+                font-weight: bold;
+            }
+            
+            QLabel#infoLabel {
+                background-color: white;
+                border-left: 4px solid #2196f3;
+                border-radius: 6px;
+                padding: 12px;
+                color: #2c3e50;
+            }
+            
+            QLabel#statsLabel {
+                background-color: #e3f2fd;
+                border-radius: 6px;
+                padding: 8px 12px;
+                color: #1976d2;
+                font-weight: bold;
+            }
+            
+            QLabel#detailsLabel {
+                background-color: white;
+                border-radius: 8px;
+                padding: 20px;
+                color: #2c3e50;
+            }
+            
+            QTextEdit#debugLog {
+                background-color: #2b2b2b;
+                color: #00ff00;
+                font-family: 'Courier New', monospace;
+                font-size: 10px;
+                border-radius: 6px;
+            }
+            
+            QCheckBox {
+                color: #2c3e50;
+                spacing: 8px;
+            }
+            
+            QCheckBox::indicator {
+                width: 18px;
+                height: 18px;
+                border-radius: 4px;
+                border: 2px solid #d0d0d0;
+            }
+            
+            QCheckBox::indicator:checked {
+                background-color: #2196f3;
+                border-color: #2196f3;
+            }
+            
+            QTabWidget::pane {
+                border: 1px solid #e0e0e0;
+                border-radius: 8px;
+                background-color: white;
+            }
+            
+            QTabBar::tab {
+                background-color: #f0f0f0;
+                border: 1px solid #d0d0d0;
+                border-bottom: none;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+                padding: 8px 16px;
+                margin-right: 2px;
+                color: #666;
+            }
+            
+            QTabBar::tab:selected {
+                background-color: white;
+                color: #2196f3;
+                font-weight: bold;
+            }
+            
+            QTabBar::tab:hover {
+                background-color: #e3f2fd;
+            }
+        """
     
     def setup_ui(self):
         """Set up the enhanced UI"""
         layout = QVBoxLayout()
+        layout.setSpacing(15)
+        layout.setContentsMargins(20, 20, 20, 20)
         
         # Header Section
-        header_layout = QVBoxLayout()
-        
-        # Title and user info
-        title_layout = QHBoxLayout()
-        title = QLabel("<h2>📚 Your Nottorney Decks</h2>")
-        title_layout.addWidget(title)
-        title_layout.addStretch()
-        
-        user = config.get_user()
-        if user:
-            user_label = QLabel(f"👤 <b>{user.get('email', 'Unknown')}</b>")
-            title_layout.addWidget(user_label)
-        
-        header_layout.addLayout(title_layout)
-        
-        # Status/Info bar
-        self.info_label = QLabel("Loading decks...")
-        self.info_label.setStyleSheet("""
-            QLabel {
-                padding: 8px;
-                background-color: #e3f2fd;
-                border-radius: 4px;
-                border-left: 4px solid #2196f3;
-            }
-        """)
-        header_layout.addWidget(self.info_label)
-        
+        header_layout = self.create_header()
         layout.addLayout(header_layout)
         
-        # Control Panel
-        control_panel = self.create_control_panel()
-        layout.addWidget(control_panel)
+        # Mode Toggle
+        mode_toggle = self.create_mode_toggle()
+        layout.addWidget(mode_toggle)
         
-        # Main Content - Split view
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        # Tab Widget for Basic/Advanced
+        self.tab_widget = QTabWidget()
         
-        # Left: Deck List
-        left_panel = self.create_deck_list_panel()
-        splitter.addWidget(left_panel)
+        # Basic Mode Tab
+        basic_tab = self.create_basic_mode_tab()
+        self.tab_widget.addTab(basic_tab, "📚 My Decks")
         
-        # Right: Details Panel
-        right_panel = self.create_details_panel()
-        splitter.addWidget(right_panel)
+        # Advanced Mode Tab
+        advanced_tab = self.create_advanced_mode_tab()
+        self.tab_widget.addTab(advanced_tab, "⚙️ Advanced")
         
-        splitter.setStretchFactor(0, 2)
-        splitter.setStretchFactor(1, 1)
-        
-        layout.addWidget(splitter, 1)
+        layout.addWidget(self.tab_widget, 1)
         
         # Bottom Buttons
-        button_layout = QHBoxLayout()
-        
-        self.refresh_button = QPushButton("🔄 Refresh List")
-        self.refresh_button.clicked.connect(self.load_decks)
-        
-        self.sync_button = QPushButton("☁️ Sync Progress")
-        self.sync_button.clicked.connect(self.sync_progress)
-        
-        self.download_button = QPushButton("⬇️ Download/Update Deck")
-        self.download_button.clicked.connect(self.download_selected_deck)
-        self.download_button.setEnabled(False)
-        self.download_button.setStyleSheet("""
-            QPushButton {
-                background-color: #4caf50;
-                color: white;
-                padding: 8px 16px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #45a049;
-            }
-            QPushButton:disabled {
-                background-color: #cccccc;
-            }
-        """)
-        
-        close_button = QPushButton("Close")
-        close_button.clicked.connect(self.accept)
-        
-        button_layout.addWidget(self.refresh_button)
-        button_layout.addWidget(self.sync_button)
-        button_layout.addStretch()
-        button_layout.addWidget(self.download_button)
-        button_layout.addWidget(close_button)
-        
+        button_layout = self.create_bottom_buttons()
         layout.addLayout(button_layout)
         
         self.setLayout(layout)
     
-    def create_control_panel(self):
-        """Create the control panel with search and filters"""
-        panel = QGroupBox("Filters & Search")
+    def create_header(self):
+        """Create the header section"""
+        layout = QVBoxLayout()
+        
+        # Title row
+        title_layout = QHBoxLayout()
+        title = QLabel("📚 Your Nottorney Decks")
+        title.setObjectName("headerLabel")
+        title_layout.addWidget(title)
+        title_layout.addStretch()
+        
+        # User info
+        user = config.get_user()
+        if user:
+            user_label = QLabel(f"👤 {user.get('email', 'User')}")
+            user_label.setStyleSheet("color: #666; font-size: 14px;")
+            title_layout.addWidget(user_label)
+        
+        layout.addLayout(title_layout)
+        
+        # Info/Status bar
+        self.info_label = QLabel("Loading decks...")
+        self.info_label.setObjectName("infoLabel")
+        layout.addWidget(self.info_label)
+        
+        return layout
+    
+    def create_mode_toggle(self):
+        """Create mode toggle button"""
         layout = QHBoxLayout()
         
-        # Search box
-        search_label = QLabel("🔍")
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search decks by title or subject...")
-        self.search_input.textChanged.connect(self.on_search_changed)
-        self.search_input.setMinimumWidth(250)
+        self.mode_button = QPushButton("🔧 Switch to Advanced Mode")
+        self.mode_button.clicked.connect(self.toggle_mode)
+        self.mode_button.setMaximumWidth(200)
         
-        # Sort by dropdown
-        sort_label = QLabel("Sort by:")
+        layout.addStretch()
+        layout.addWidget(self.mode_button)
+        
+        widget = QWidget()
+        widget.setLayout(layout)
+        return widget
+    
+    def toggle_mode(self):
+        """Toggle between Basic and Advanced modes"""
+        self.advanced_mode = not self.advanced_mode
+        
+        if self.advanced_mode:
+            self.mode_button.setText("📚 Switch to Basic Mode")
+            self.tab_widget.setCurrentIndex(1)
+        else:
+            self.mode_button.setText("🔧 Switch to Advanced Mode")
+            self.tab_widget.setCurrentIndex(0)
+    
+    def create_basic_mode_tab(self):
+        """Create the Basic Mode tab - simple and clean"""
+        widget = QWidget()
+        layout = QVBoxLayout()
+        layout.setSpacing(15)
+        
+        # Simple search
+        search_layout = QHBoxLayout()
+        search_label = QLabel("🔍")
+        search_label.setStyleSheet("font-size: 18px;")
+        self.basic_search_input = QLineEdit()
+        self.basic_search_input.setPlaceholderText("Search your decks...")
+        self.basic_search_input.textChanged.connect(self.on_search_changed)
+        
+        search_layout.addWidget(search_label)
+        search_layout.addWidget(self.basic_search_input)
+        layout.addLayout(search_layout)
+        
+        # Quick filters
+        filter_layout = QHBoxLayout()
+        
+        self.show_all_btn = QPushButton("📚 All Decks")
+        self.show_all_btn.setCheckable(True)
+        self.show_all_btn.setChecked(True)
+        self.show_all_btn.clicked.connect(lambda: self.quick_filter("all"))
+        
+        self.show_downloaded_btn = QPushButton("✓ Downloaded")
+        self.show_downloaded_btn.setCheckable(True)
+        self.show_downloaded_btn.clicked.connect(lambda: self.quick_filter("downloaded"))
+        
+        self.show_updates_btn = QPushButton("⟳ Updates Available")
+        self.show_updates_btn.setCheckable(True)
+        self.show_updates_btn.clicked.connect(lambda: self.quick_filter("updates"))
+        
+        filter_layout.addWidget(self.show_all_btn)
+        filter_layout.addWidget(self.show_downloaded_btn)
+        filter_layout.addWidget(self.show_updates_btn)
+        filter_layout.addStretch()
+        
+        layout.addLayout(filter_layout)
+        
+        # Stats summary
+        self.stats_label = QLabel("0 decks")
+        self.stats_label.setObjectName("statsLabel")
+        layout.addWidget(self.stats_label)
+        
+        # Deck list
+        self.deck_list = QListWidget()
+        self.deck_list.itemSelectionChanged.connect(self.on_selection_changed)
+        self.deck_list.itemDoubleClicked.connect(self.download_selected_deck)
+        layout.addWidget(self.deck_list)
+        
+        # Quick action buttons
+        quick_actions = QHBoxLayout()
+        
+        self.check_updates_button = QPushButton("🔄 Check for Updates")
+        self.check_updates_button.clicked.connect(self.check_for_updates)
+        
+        quick_actions.addWidget(self.check_updates_button)
+        quick_actions.addStretch()
+        
+        layout.addLayout(quick_actions)
+        
+        widget.setLayout(layout)
+        return widget
+    
+    def create_advanced_mode_tab(self):
+        """Create the Advanced Mode tab - detailed controls"""
+        widget = QWidget()
+        layout = QVBoxLayout()
+        layout.setSpacing(15)
+        
+        # Advanced filters
+        filter_group = QGroupBox("🔍 Filters & Sorting")
+        filter_layout = QVBoxLayout()
+        
+        # Search row
+        search_row = QHBoxLayout()
+        self.adv_search_input = QLineEdit()
+        self.adv_search_input.setPlaceholderText("Search by title, subject, or description...")
+        self.adv_search_input.textChanged.connect(self.on_search_changed)
+        search_row.addWidget(QLabel("Search:"))
+        search_row.addWidget(self.adv_search_input)
+        filter_layout.addLayout(search_row)
+        
+        # Sort row
+        sort_row = QHBoxLayout()
         self.sort_combo = QComboBox()
         self.sort_combo.addItems([
             "Title (A-Z)",
@@ -149,62 +410,53 @@ class DeckManagerDialog(QDialog):
             "Updates Available"
         ])
         self.sort_combo.currentIndexChanged.connect(self.on_sort_changed)
+        sort_row.addWidget(QLabel("Sort by:"))
+        sort_row.addWidget(self.sort_combo)
+        sort_row.addStretch()
+        filter_layout.addLayout(sort_row)
         
         # Filter checkboxes
-        self.updates_checkbox = QCheckBox("Updates Only")
+        checkbox_row = QHBoxLayout()
+        self.updates_checkbox = QCheckBox("Show Updates Only")
         self.updates_checkbox.stateChanged.connect(self.filter_decks)
-        
-        self.downloaded_checkbox = QCheckBox("Downloaded Only")
+        self.downloaded_checkbox = QCheckBox("Show Downloaded Only")
         self.downloaded_checkbox.stateChanged.connect(self.filter_decks)
         
-        # Check updates button
-        self.check_updates_button = QPushButton("🔄 Check for Updates")
-        self.check_updates_button.clicked.connect(self.check_for_updates)
+        checkbox_row.addWidget(self.updates_checkbox)
+        checkbox_row.addWidget(self.downloaded_checkbox)
+        checkbox_row.addStretch()
+        filter_layout.addLayout(checkbox_row)
         
-        layout.addWidget(search_label)
-        layout.addWidget(self.search_input)
-        layout.addWidget(sort_label)
-        layout.addWidget(self.sort_combo)
-        layout.addWidget(self.updates_checkbox)
-        layout.addWidget(self.downloaded_checkbox)
-        layout.addStretch()
-        layout.addWidget(self.check_updates_button)
+        filter_group.setLayout(filter_layout)
+        layout.addWidget(filter_group)
         
-        panel.setLayout(layout)
-        return panel
-    
-    def create_deck_list_panel(self):
-        """Create the deck list panel"""
-        widget = QWidget()
-        layout = QVBoxLayout()
+        # Split view
+        splitter = QSplitter(Qt.Orientation.Horizontal)
         
-        # Stats summary
-        self.stats_label = QLabel("0 decks")
-        self.stats_label.setStyleSheet("font-weight: bold; padding: 5px;")
-        layout.addWidget(self.stats_label)
+        # Left: Deck list
+        left_widget = QWidget()
+        left_layout = QVBoxLayout()
         
-        # Deck list
-        self.deck_list = QListWidget()
-        self.deck_list.itemSelectionChanged.connect(self.on_selection_changed)
-        self.deck_list.itemDoubleClicked.connect(self.download_selected_deck)
-        self.deck_list.setStyleSheet("""
-            QListWidget {
-                border: 1px solid #ddd;
-                border-radius: 4px;
-            }
-            QListWidget::item {
-                padding: 12px;
-                border-bottom: 1px solid #e0e0e0;
-            }
-            QListWidget::item:selected {
-                background-color: #e3f2fd;
-                color: black;
-            }
-            QListWidget::item:hover {
-                background-color: #f5f5f5;
-            }
-        """)
-        layout.addWidget(self.deck_list)
+        self.adv_stats_label = QLabel("0 decks")
+        self.adv_stats_label.setObjectName("statsLabel")
+        left_layout.addWidget(self.adv_stats_label)
+        
+        self.adv_deck_list = QListWidget()
+        self.adv_deck_list.itemSelectionChanged.connect(self.on_selection_changed)
+        self.adv_deck_list.itemDoubleClicked.connect(self.download_selected_deck)
+        left_layout.addWidget(self.adv_deck_list)
+        
+        left_widget.setLayout(left_layout)
+        splitter.addWidget(left_widget)
+        
+        # Right: Details
+        right_widget = self.create_details_panel()
+        splitter.addWidget(right_widget)
+        
+        splitter.setStretchFactor(0, 2)
+        splitter.setStretchFactor(1, 1)
+        
+        layout.addWidget(splitter, 1)
         
         widget.setLayout(layout)
         return widget
@@ -214,55 +466,31 @@ class DeckManagerDialog(QDialog):
         widget = QWidget()
         layout = QVBoxLayout()
         
-        # Details header
-        details_header = QLabel("<h3>Deck Details</h3>")
+        details_header = QLabel("<h3>📋 Deck Details</h3>")
         layout.addWidget(details_header)
         
-        # Scrollable details area
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         
-        self.details_widget = QWidget()
-        self.details_layout = QVBoxLayout()
-        
-        # Placeholder
         self.details_label = QLabel("Select a deck to view details")
+        self.details_label.setObjectName("detailsLabel")
         self.details_label.setWordWrap(True)
         self.details_label.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self.details_label.setStyleSheet("""
-            QLabel {
-                padding: 15px;
-                background-color: #fafafa;
-                border-radius: 4px;
-            }
-        """)
         
-        self.details_layout.addWidget(self.details_label)
-        self.details_layout.addStretch()
-        
-        self.details_widget.setLayout(self.details_layout)
-        scroll.setWidget(self.details_widget)
-        
-        layout.addWidget(scroll)
+        scroll.setWidget(self.details_label)
+        layout.addWidget(scroll, 1)
         
         # Debug log (collapsible)
-        debug_group = QGroupBox("Debug Log")
+        debug_group = QGroupBox("🐛 Debug Log")
         debug_group.setCheckable(True)
         debug_group.setChecked(False)
         debug_layout = QVBoxLayout()
         
         self.debug_log = QTextEdit()
+        self.debug_log.setObjectName("debugLog")
         self.debug_log.setReadOnly(True)
         self.debug_log.setMaximumHeight(150)
-        self.debug_log.setStyleSheet("""
-            QTextEdit {
-                background-color: #2b2b2b;
-                color: #00ff00;
-                font-family: 'Courier New', monospace;
-                font-size: 10px;
-            }
-        """)
         debug_layout.addWidget(self.debug_log)
         debug_group.setLayout(debug_layout)
         
@@ -270,6 +498,52 @@ class DeckManagerDialog(QDialog):
         
         widget.setLayout(layout)
         return widget
+    
+    def quick_filter(self, filter_type):
+        """Handle quick filter buttons"""
+        # Update button states
+        self.show_all_btn.setChecked(filter_type == "all")
+        self.show_downloaded_btn.setChecked(filter_type == "downloaded")
+        self.show_updates_btn.setChecked(filter_type == "updates")
+        
+        # Update checkboxes in advanced mode
+        if filter_type == "all":
+            self.updates_checkbox.setChecked(False)
+            self.downloaded_checkbox.setChecked(False)
+        elif filter_type == "downloaded":
+            self.updates_checkbox.setChecked(False)
+            self.downloaded_checkbox.setChecked(True)
+        elif filter_type == "updates":
+            self.updates_checkbox.setChecked(True)
+            self.downloaded_checkbox.setChecked(False)
+        
+        self.filter_decks()
+    
+    def create_bottom_buttons(self):
+        """Create bottom action buttons"""
+        layout = QHBoxLayout()
+        
+        self.refresh_button = QPushButton("🔄 Refresh")
+        self.refresh_button.clicked.connect(self.load_decks)
+        
+        self.sync_button = QPushButton("☁️ Sync Progress")
+        self.sync_button.clicked.connect(self.sync_progress)
+        
+        self.download_button = QPushButton("⬇️ Download/Update Deck")
+        self.download_button.setObjectName("primaryButton")
+        self.download_button.clicked.connect(self.download_selected_deck)
+        self.download_button.setEnabled(False)
+        
+        close_button = QPushButton("✕ Close")
+        close_button.clicked.connect(self.accept)
+        
+        layout.addWidget(self.refresh_button)
+        layout.addWidget(self.sync_button)
+        layout.addStretch()
+        layout.addWidget(self.download_button)
+        layout.addWidget(close_button)
+        
+        return layout
     
     def log(self, message):
         """Add message to debug log"""
@@ -279,6 +553,11 @@ class DeckManagerDialog(QDialog):
     def on_search_changed(self, text):
         """Handle search text change"""
         self.search_text = text.lower()
+        # Sync both search boxes
+        if self.sender() == self.basic_search_input:
+            self.adv_search_input.setText(text)
+        else:
+            self.basic_search_input.setText(text)
         self.filter_decks()
     
     def on_sort_changed(self, index):
@@ -385,30 +664,14 @@ class DeckManagerDialog(QDialog):
             
             if updates_count > 0:
                 self.info_label.setText(f"✨ {updates_count} update(s) available!")
-                self.info_label.setStyleSheet("""
-                    QLabel {
-                        padding: 8px;
-                        background-color: #fff3cd;
-                        border-radius: 4px;
-                        border-left: 4px solid #ffc107;
-                    }
-                """)
                 QMessageBox.information(
                     self, "Updates Available",
                     f"🎉 {updates_count} deck update(s) available!\n\n"
                     f"Total decks: {total}\n\n"
-                    "Enable 'Updates Only' filter to see them."
+                    "Check the 'Updates Available' filter to see them."
                 )
             else:
                 self.info_label.setText(f"✅ All {total} decks are up to date!")
-                self.info_label.setStyleSheet("""
-                    QLabel {
-                        padding: 8px;
-                        background-color: #d4edda;
-                        border-radius: 4px;
-                        border-left: 4px solid #28a745;
-                    }
-                """)
             
             self.load_decks()
             
@@ -450,7 +713,11 @@ class DeckManagerDialog(QDialog):
     def load_decks(self):
         """Load decks from API"""
         self.info_label.setText("⏳ Loading decks...")
-        self.deck_list.clear()
+        
+        # Get active list widget based on mode
+        active_list = self.deck_list if not self.advanced_mode else self.adv_deck_list
+        active_list.clear()
+        
         self.details_label.setText("Loading...")
         
         # Disable controls
@@ -465,6 +732,7 @@ class DeckManagerDialog(QDialog):
             if not self.decks:
                 self.info_label.setText("📭 No purchased decks found")
                 self.stats_label.setText("0 decks")
+                self.adv_stats_label.setText("0 decks")
                 return
             
             total = len(self.decks)
@@ -472,7 +740,7 @@ class DeckManagerDialog(QDialog):
             updates = sum(1 for d in self.decks if self.has_update(d))
             
             self.info_label.setText(
-                f"📚 {total} deck(s) | ✓ {downloaded} downloaded | ⟳ {updates} updates"
+                f"📚 {total} deck(s) • ✓ {downloaded} downloaded • ⟳ {updates} updates"
             )
             
             self.log(f"Loaded {total} decks")
@@ -495,15 +763,19 @@ class DeckManagerDialog(QDialog):
             self.check_updates_button.setEnabled(True)
     
     def populate_deck_list(self, decks):
-        """Populate the deck list"""
+        """Populate both deck lists"""
         self.deck_list.clear()
+        self.adv_deck_list.clear()
         
         if not decks:
             self.stats_label.setText("0 decks found")
+            self.adv_stats_label.setText("0 decks found")
             self.details_label.setText("No decks match your filters")
             return
         
-        self.stats_label.setText(f"{len(decks)} deck(s)")
+        stats_text = f"{len(decks)} deck(s)"
+        self.stats_label.setText(stats_text)
+        self.adv_stats_label.setText(stats_text)
         
         for deck in decks:
             deck_id = self.get_deck_id(deck)
@@ -518,34 +790,43 @@ class DeckManagerDialog(QDialog):
             is_downloaded = self.is_downloaded(deck)
             has_update = self.has_update(deck)
             
-            # Status icon and text
+            # Status icon and styling
             if has_update:
                 icon = "⟳"
                 status = "Update Available"
-                color = "#ff9800"
+                status_style = "color: #ff9800; font-weight: bold;"
             elif is_downloaded:
                 icon = "✓"
                 status = "Downloaded"
-                color = "#4caf50"
+                status_style = "color: #4caf50; font-weight: bold;"
             else:
                 icon = "○"
                 status = "Not Downloaded"
-                color = "#757575"
+                status_style = "color: #757575;"
             
-            # Format display text
-            display = f"{icon} <b>{title}</b>\n"
-            display += f"   {subject} • {cards} cards • v{version}\n"
-            display += f"   <span style='color: {color};'>{status}</span>"
+            # Format display text with better spacing
+            display = f"<div style='line-height: 1.5;'>"
+            display += f"<span style='font-size: 16px;'>{icon}</span> "
+            display += f"<span style='font-size: 14px; font-weight: bold; color: #2c3e50;'>{title}</span><br>"
+            display += f"<span style='color: #666; font-size: 12px;'>📖 {subject} • 🃏 {cards} cards • v{version}</span><br>"
+            display += f"<span style='{status_style} font-size: 12px;'>{status}</span>"
+            display += "</div>"
             
             item = QListWidgetItem()
             item.setText(display)
             item.setData(Qt.ItemDataRole.UserRole, deck)
             
-            self.deck_list.addItem(item)
+            # Add to both lists
+            self.deck_list.addItem(item.clone())
+            self.adv_deck_list.addItem(item)
     
     def on_selection_changed(self):
         """Handle deck selection"""
-        items = self.deck_list.selectedItems()
+        # Get selection from active list
+        if self.advanced_mode:
+            items = self.adv_deck_list.selectedItems()
+        else:
+            items = self.deck_list.selectedItems()
         
         if not items:
             self.download_button.setEnabled(False)
@@ -568,51 +849,56 @@ class DeckManagerDialog(QDialog):
         is_downloaded = self.is_downloaded(deck)
         has_update = self.has_update(deck)
         
-        # Build detailed HTML
-        html = f"<h3 style='color: #2196f3;'>{title}</h3>"
-        html += f"<p style='color: #666;'><i>{desc}</i></p>"
+        # Build clean HTML
+        html = f"<h2 style='color: #2196f3; margin-bottom: 10px;'>{title}</h2>"
+        html += f"<p style='color: #666; margin-bottom: 20px; font-style: italic;'>{desc}</p>"
         
-        html += "<hr>"
-        
-        html += "<table cellpadding='5' style='width: 100%;'>"
-        html += f"<tr><td><b>Subject:</b></td><td>{subject}</td></tr>"
-        html += f"<tr><td><b>Cards:</b></td><td>{cards}</td></tr>"
-        html += f"<tr><td><b>Version:</b></td><td>v{version}</td></tr>"
+        html += "<div style='background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 15px;'>"
+        html += f"<p style='margin: 5px 0;'><strong>📖 Subject:</strong> {subject}</p>"
+        html += f"<p style='margin: 5px 0;'><strong>🃏 Cards:</strong> {cards}</p>"
+        html += f"<p style='margin: 5px 0;'><strong>📌 Version:</strong> v{version}</p>"
         
         if is_downloaded:
             downloaded_ver = config.get_deck_version(deck_id)
-            html += f"<tr><td><b>Downloaded:</b></td><td>v{downloaded_ver}</td></tr>"
+            html += f"<p style='margin: 5px 0;'><strong>💾 Downloaded:</strong> v{downloaded_ver}</p>"
             
             dl_info = config.get_downloaded_decks().get(deck_id, {})
             dl_date = dl_info.get('downloaded_at', 'Unknown')
             if dl_date != 'Unknown':
-                dl_date = dl_date.split('T')[0]  # Just the date
-            html += f"<tr><td><b>Downloaded On:</b></td><td>{dl_date}</td></tr>"
+                try:
+                    dl_date = dl_date.split('T')[0]
+                except:
+                    pass
+            html += f"<p style='margin: 5px 0;'><strong>📅 Downloaded On:</strong> {dl_date}</p>"
         
-        html += "</table>"
-        
-        html += "<hr>"
+        html += "</div>"
         
         if has_update:
             downloaded_ver = config.get_deck_version(deck_id)
-            html += f"<div style='background: #fff3cd; padding: 10px; border-radius: 4px; border-left: 4px solid #ffc107;'>"
-            html += f"<b>🎉 Update Available!</b><br>"
-            html += f"v{downloaded_ver} → v{version}"
+            html += "<div style='background: #fff3cd; padding: 15px; border-radius: 8px; border-left: 4px solid #ffc107;'>"
+            html += "<p style='margin: 0; font-weight: bold; color: #856404;'>🎉 Update Available!</p>"
+            html += f"<p style='margin: 5px 0 0 0; color: #856404;'>v{downloaded_ver} → v{version}</p>"
             html += "</div>"
         elif is_downloaded:
-            html += f"<div style='background: #d4edda; padding: 10px; border-radius: 4px; border-left: 4px solid #28a745;'>"
-            html += "<b>✅ Up to Date</b>"
+            html += "<div style='background: #d4edda; padding: 15px; border-radius: 8px; border-left: 4px solid #28a745;'>"
+            html += "<p style='margin: 0; font-weight: bold; color: #155724;'>✅ Up to Date</p>"
             html += "</div>"
         else:
-            html += f"<div style='background: #e3f2fd; padding: 10px; border-radius: 4px; border-left: 4px solid #2196f3;'>"
-            html += "<b>⬇️ Click 'Download' to import this deck</b>"
+            html += "<div style='background: #e3f2fd; padding: 15px; border-radius: 8px; border-left: 4px solid #2196f3;'>"
+            html += "<p style='margin: 0; font-weight: bold; color: #0d47a1;'>⬇️ Ready to Download</p>"
+            html += "<p style='margin: 5px 0 0 0; color: #0d47a1;'>Click the download button below to add this deck</p>"
             html += "</div>"
         
         self.details_label.setText(html)
     
     def download_selected_deck(self):
         """Download/update the selected deck"""
-        items = self.deck_list.selectedItems()
+        # Get selection from active list
+        if self.advanced_mode:
+            items = self.adv_deck_list.selectedItems()
+        else:
+            items = self.deck_list.selectedItems()
+            
         if not items:
             return
         
@@ -630,8 +916,7 @@ class DeckManagerDialog(QDialog):
             if downloaded_ver == deck_version:
                 reply = QMessageBox.question(
                     self, "Re-download Deck",
-                    f"You already have {deck_title} v{deck_version}.\n\n"
-                    "Download again?",
+                    f"You already have {deck_title} v{deck_version}.\n\nDownload again?",
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
                 )
                 if reply == QMessageBox.StandardButton.No:
@@ -639,8 +924,7 @@ class DeckManagerDialog(QDialog):
             else:
                 reply = QMessageBox.question(
                     self, "Update Deck",
-                    f"Update {deck_title}?\n\n"
-                    f"v{downloaded_ver} → v{deck_version}",
+                    f"Update {deck_title}?\n\nv{downloaded_ver} → v{deck_version}",
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
                 )
                 if reply == QMessageBox.StandardButton.No:
