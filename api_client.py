@@ -1,23 +1,17 @@
 """
-Simple API client for Nottorney Add-on.
-
-Replace the repository's Nottorney_Addon/api_client.py with this file to
-remove merge conflict markers and provide a minimal, robust API client.
-
+Robust API client for Nottorney Add-on.
+This file replaces a conflicted version and provides stable wrappers used by the addon UI.
 Exports:
 - api: ApiClient instance
-- NottorneyAPIError: exception class used across the add-on
+- NottorneyAPIError: exception class
 """
 
 from __future__ import annotations
 import json
-import time
 from typing import Any, Dict, Optional
 
-# Primary API base (kept from your docs)
 API_BASE = "https://ladvckxztcleljbiomcf.supabase.co/functions/v1"
 
-# Prefer requests if available; fall back to urllib to avoid runtime import errors.
 try:
     import requests  # type: ignore
     _HAS_REQUESTS = True
@@ -28,8 +22,6 @@ except Exception:
 
 
 class NottorneyAPIError(Exception):
-    """Raised for API-level errors (non-2xx or well-formed error responses)."""
-
     def __init__(self, message: str, status_code: Optional[int] = None, details: Optional[Any] = None):
         super().__init__(message)
         self.status_code = status_code
@@ -37,8 +29,6 @@ class NottorneyAPIError(Exception):
 
 
 class ApiClient:
-    """Minimal API client used by the add-on."""
-
     def __init__(self, access_token: Optional[str] = None, base_url: str = API_BASE):
         self.access_token = access_token
         self.base_url = base_url.rstrip("/")
@@ -60,11 +50,10 @@ class ApiClient:
 
         if _HAS_REQUESTS:
             try:
-                resp = requests.post(url, headers=headers, json=json_body, timeout=timeout)
+                resp = requests.post(url, headers=headers, json=json_body or {}, timeout=timeout)
             except Exception as e:
                 raise NottorneyAPIError(f"Network error: {e}") from e
 
-            # try parse JSON, but if not possible, raise
             try:
                 data = resp.json()
             except Exception:
@@ -72,7 +61,6 @@ class ApiClient:
                 raise NottorneyAPIError("Invalid JSON response from server", status_code=resp.status_code, details=text)
 
             if not resp.ok:
-                # prefer structured error details if present
                 err_msg = None
                 if isinstance(data, dict):
                     err_msg = data.get("error") or data.get("message") or data.get("detail")
@@ -82,7 +70,7 @@ class ApiClient:
 
         # urllib fallback
         try:
-            req_data = (json.dumps(json_body) if json_body is not None else "").encode("utf-8")
+            req_data = (json.dumps(json_body or {})).encode("utf-8")
             req = _urllib_request.Request(url, data=req_data, headers=headers, method="POST")
             with _urllib_request.urlopen(req, timeout=timeout) as resp:
                 raw = resp.read()
@@ -104,28 +92,81 @@ class ApiClient:
         except Exception as e:
             raise NottorneyAPIError(f"Network error: {e}") from e
 
-    # Convenience methods used by the addon:
+    # Convenience wrappers expected by the addon
     def login(self, email: str, password: str) -> Dict[str, Any]:
         return self.post("/addon-login", json_body={"email": email, "password": password}, require_auth=False)
 
     def refresh_token(self, refresh_token: str) -> Dict[str, Any]:
         return self.post("/addon-refresh-token", json_body={"refresh_token": refresh_token}, require_auth=False)
 
-    def get_purchases(self) -> Dict[str, Any]:
+    def get_purchased_decks(self) -> Any:
         return self.post("/addon-get-purchases")
 
-    def download_deck(self, deck_id: str, version: Optional[str] = None) -> Dict[str, Any]:
-        payload = {"deck_id": deck_id}
-        if version:
-            payload["version"] = version
-        return self.post("/addon-download-deck", json_body=payload)
+    def batch_download_decks(self, deck_ids: list[str]) -> Any:
+        return self.post("/addon-batch-download", json_body={"deck_ids": deck_ids})
 
-    # Add additional convenience wrappers as needed by the addon...
+    def download_deck_file(self, download_url: str) -> bytes:
+        if not download_url:
+            raise NottorneyAPIError("Download URL is required")
+
+        if not _HAS_REQUESTS:
+            # Use urllib to fetch bytes
+            try:
+                req = _urllib_request.Request(download_url, method="GET")
+                with _urllib_request.urlopen(req, timeout=120) as resp:
+                    return resp.read()
+            except Exception as e:
+                raise NottorneyAPIError(f"Network error while downloading deck: {e}") from e
+
+        try:
+            response = requests.get(download_url, timeout=120, stream=True, allow_redirects=True)
+            response.raise_for_status()
+
+            content_type = response.headers.get("Content-Type", "").lower()
+            if "text/html" in content_type or "application/json" in content_type:
+                try:
+                    text = response.text[:1000]
+                    if "error" in text.lower() or "expired" in text.lower():
+                        raise NottorneyAPIError(f"Signed URL may be expired/invalid: {text[:200]}")
+                except Exception:
+                    pass
+                raise NottorneyAPIError(f"Received {content_type} instead of a deck file. URL may be expired or invalid.")
+
+            valid_types = ("application/zip", "application/octet-stream", "application/x-zip-compressed")
+            if content_type and not any(v in content_type for v in valid_types):
+                # not fatal, just warn via print
+                print(f"⚠ Warning: unexpected content-type: {content_type}")
+
+            content = bytearray()
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    content.extend(chunk)
+
+            if len(content) == 0:
+                raise NottorneyAPIError("Downloaded file is empty")
+
+            # quick ZIP signature check
+            if len(content) >= 2 and content[:2] != b"PK":
+                print("⚠ Warning: downloaded file does not start with PK (not a ZIP).")
+
+            return bytes(content)
+        except requests.HTTPError as he:
+            raise NottorneyAPIError(f"HTTP error while downloading deck: {he}", status_code=getattr(he.response, "status_code", None)) from he
+        except requests.RequestException as re:
+            raise NottorneyAPIError(f"Network error while downloading deck: {re}") from re
+        except Exception as e:
+            raise NottorneyAPIError(f"Unexpected error downloading deck: {e}") from e
+
+    def get_changelog(self, deck_id: str) -> Any:
+        return self.post("/addon-get-changelog", json_body={"deck_id": deck_id})
+
+    def check_notifications(self, mark_as_read: bool = False, limit: int = 10) -> Any:
+        return self.post("/addon-check-notifications", json_body={"mark_as_read": mark_as_read, "limit": limit})
 
 
-# single shared instance used by the add-on modules
+# single shared instance
 api = ApiClient()
 
-# allow a simple helper to configure token from other modules
+
 def set_access_token(token: Optional[str]) -> None:
     api.access_token = token
