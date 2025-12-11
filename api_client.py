@@ -219,14 +219,62 @@ class NottorneyAPI:
             raise NottorneyAPIError("Maximum 10 decks per batch request")
         
         data = {'deck_ids': deck_ids}
-        print(f"Batch downloading {len(deck_ids)} deck(s)")
+        print(f"=== Batch downloading {len(deck_ids)} deck(s) ===")
+        print(f"Deck IDs: {deck_ids}")
         
         result = self._make_request('POST', '/addon-batch-download', data, include_auth=True)
         
-        if result.get('success'):
+        # Log full response for debugging
+        print(f"=== Batch download response ===")
+        print(f"Response keys: {list(result.keys())}")
+        
+        # Check for success - API may return success field OR use downloads/failed structure
+        downloads = result.get('downloads', [])
+        failed = result.get('failed', [])
+        total_successful = result.get('total_successful', len(downloads))
+        total_failed = result.get('total_failed', len(failed))
+        explicit_success = result.get('success')
+        
+        print(f"Downloads: {len(downloads)}, Failed: {len(failed)}")
+        print(f"Total successful: {total_successful}, Total failed: {total_failed}")
+        print(f"Explicit success field: {explicit_success}")
+        
+        # Success if: explicit success is True, OR we have downloads with no failures
+        is_successful = (
+            explicit_success is True or  # Explicit success field is True
+            (downloads and total_failed == 0) or  # Has downloads and no failures
+            (total_successful > 0 and total_failed == 0)  # All requested were successful
+        )
+        
+        if is_successful:
+            print(f"✓ Batch download successful")
+            return result
+        elif total_successful > 0:
+            # Partial success - still return the result so caller can process successful downloads
+            print(f"⚠ Partial success: {total_successful} successful, {total_failed} failed")
             return result
         
-        raise NottorneyAPIError(result.get('error', 'Batch download failed'))
+        # If we get here, it's a failure
+        error_msg = result.get('error') or result.get('message') or 'Batch download failed'
+        error_details = result.get('details') or result.get('error_details')
+        
+        print(f"✗ Batch download failed")
+        print(f"Error: {error_msg}")
+        if error_details:
+            print(f"Error details: {error_details}")
+        print(f"Full response: {result}")
+        
+        # Include full response in error message for better debugging
+        import json
+        try:
+            response_str = json.dumps(result, indent=2)
+            full_error = f"{error_msg}" + (f": {error_details}" if error_details else "")
+            full_error += f"\n\nFull API Response:\n{response_str}"
+        except:
+            full_error = f"{error_msg}" + (f": {error_details}" if error_details else "")
+            full_error += f"\n\nFull API Response: {result}"
+        
+        raise NottorneyAPIError(full_error)
     
     def get_changelog(self, deck_id: str) -> Dict:
         """

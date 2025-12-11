@@ -256,6 +256,24 @@ class MinimalNottorneyDialog(QDialog):
         self.log_widget.append(message)
         print(message)
     
+    def log_api_response(self, response_dict):
+        """Log API response in a readable format"""
+        import json
+        try:
+            formatted = json.dumps(response_dict, indent=2)
+            self.log(f"API Response:\n{formatted}")
+        except:
+            self.log(f"API Response: {response_dict}")
+    
+    def log_api_response(self, response_dict):
+        """Log API response in a readable format"""
+        import json
+        try:
+            formatted = json.dumps(response_dict, indent=2)
+            self.log(f"API Response:\n{formatted}")
+        except:
+            self.log(f"API Response: {response_dict}")
+    
     def toggle_log(self):
         """Toggle log visibility"""
         self.show_log = not self.show_log
@@ -718,8 +736,19 @@ class MinimalNottorneyDialog(QDialog):
             self.log(f"Requesting batch download for {len(deck_ids)} deck(s)...")
             
             try:
-                result = api.batch_download_decks(deck_ids)
-                self.log(f"Batch API response: success={result.get('success')}")
+                self.log(f"Calling batch_download_decks API with {len(deck_ids)} deck ID(s)...")
+                try:
+                    result = api.batch_download_decks(deck_ids)
+                except NottorneyAPIError as api_err:
+                    # Log the full error before re-raising
+                    self.log(f"✗ API Error caught: {api_err}")
+                    self.log(f"Error message: {str(api_err)}")
+                    # The API client already logs the full response, but we'll try to capture it here too
+                    raise
+                
+                self.log(f"Batch API response received: success={result.get('success')}")
+                self.log(f"Response keys: {list(result.keys())}")
+                self.log_api_response(result)
                 
                 if result.get('success'):
                     downloads = result.get('downloads', [])
@@ -797,8 +826,16 @@ class MinimalNottorneyDialog(QDialog):
             except NottorneyAPIError as e:
                 error_msg = str(e)
                 self.log(f"✗ Batch {batch_num} API error: {error_msg}")
+                self.log(f"Error type: {type(e).__name__}")
                 import traceback
-                self.log(traceback.format_exc())
+                self.log(f"Traceback:\n{traceback.format_exc()}")
+                
+                # Try to get more details from the exception if available
+                if hasattr(e, 'response'):
+                    self.log(f"Response object: {e.response}")
+                if hasattr(e, 'args') and e.args:
+                    self.log(f"Error args: {e.args}")
+                
                 for deck in batch:
                     failed.append(f"{deck.get('title', 'Unknown')}: {error_msg}")
             except Exception as e:
