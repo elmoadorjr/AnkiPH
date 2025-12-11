@@ -5,7 +5,7 @@ Clean, modern UI with better user experience
 
 from aqt.qt import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
-    QLineEdit, QPushButton, QMessageBox, QFrame
+    QLineEdit, QPushButton, QMessageBox, QFrame, Qt
 )
 from ..api_client import api, NottorneyAPIError
 

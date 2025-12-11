@@ -199,12 +199,17 @@ class MinimalNottorneyDialog(QDialog):
         self.sync_btn.setObjectName("primary")
         self.sync_btn.clicked.connect(self.sync_all)
         
+        self.refresh_btn = QPushButton("Refresh Status")
+        self.refresh_btn.setObjectName("secondary")
+        self.refresh_btn.clicked.connect(self.load_deck_status)
+        
         self.logout_btn = QPushButton("Logout")
         self.logout_btn.setObjectName("secondary")
         self.logout_btn.clicked.connect(self.handle_logout)
         
         layout.addWidget(self.sync_status)
         layout.addWidget(self.sync_btn)
+        layout.addWidget(self.refresh_btn)
         layout.addWidget(self.logout_btn)
         
         widget.setLayout(layout)
@@ -516,21 +521,72 @@ class MinimalNottorneyDialog(QDialog):
             self.status_label.setText("⏳ Loading decks...")
             self.log("Fetching purchased decks...")
             
-            self.decks = api.get_purchased_decks()
+            # CRITICAL: Clean up deleted decks first
+            self.log("Running cleanup before status check...")
+            cleaned, total_tracked = config.cleanup_deleted_decks()
+            if cleaned > 0:
+                self.log(f"✓ Cleaned up {cleaned} deleted deck(s) from tracking")
+            
+            self.log("Calling API to get purchased decks...")
+            try:
+                self.decks = api.get_purchased_decks()
+                self.log(f"API returned {len(self.decks)} deck(s)")
+                
+                # Debug: Log the raw response structure
+                if len(self.decks) > 0:
+                    self.log(f"First deck structure: {list(self.decks[0].keys())}")
+                    self.log(f"First deck sample: {self.decks[0]}")
+                else:
+                    self.log("⚠ API returned empty list - checking if this is expected")
+                    
+            except NottorneyAPIError as e:
+                self.log(f"❌ API Error: {e}")
+                self.status_label.setText("❌ Failed to load decks")
+                self.sync_status.setText(f"API Error: {str(e)}")
+                self.sync_btn.setEnabled(False)
+                return
+            except Exception as e:
+                self.log(f"❌ Unexpected error fetching decks: {e}")
+                import traceback
+                self.log(traceback.format_exc())
+                self.status_label.setText("❌ Error loading decks")
+                self.sync_status.setText(f"Error: {str(e)}")
+                self.sync_btn.setEnabled(False)
+                return
+            
             total = len(self.decks)
+            
+            if total == 0:
+                self.status_label.setText("No purchased decks found")
+                self.sync_status.setText("You don't have any purchased decks")
+                self.sync_btn.setText("No Decks")
+                self.sync_btn.setEnabled(False)
+                self.log("⚠ No decks found - this might be a data issue")
+                return
             
             new = 0
             updates = 0
             
             for deck in self.decks:
                 deck_id = self.get_deck_id(deck)
+                deck_title = deck.get('title', 'Unknown')
+                
+                if not deck_id:
+                    self.log(f"⚠ Deck '{deck_title}' has no ID, treating as new")
+                    new += 1
+                    continue
+                
+                self.log(f"Checking deck '{deck_title}' (ID: {deck_id})...")
                 
                 if not config.is_deck_downloaded(deck_id):
+                    self.log(f"  → Not downloaded")
                     new += 1
                 else:
                     current_version = self.get_deck_version(deck)
                     saved_version = config.get_deck_version(deck_id)
+                    self.log(f"  → Downloaded (saved: {saved_version}, current: {current_version})")
                     if current_version != saved_version:
+                        self.log(f"  → Update available")
                         updates += 1
             
             self.log(f"Found {total} decks: {new} new, {updates} updates")
@@ -559,6 +615,8 @@ class MinimalNottorneyDialog(QDialog):
             self.sync_btn.setEnabled(False)
         except Exception as e:
             self.log(f"Unexpected error: {e}")
+            import traceback
+            self.log(traceback.format_exc())
             self.status_label.setText("❌ Error")
             self.sync_status.setText(str(e))
             self.sync_btn.setEnabled(False)
@@ -566,22 +624,41 @@ class MinimalNottorneyDialog(QDialog):
     def sync_all(self):
         """Download all new/updated decks using batch download"""
         if self.is_syncing:
+            self.log("⚠ Already syncing, ignoring request")
             return
         
+        if not self.decks:
+            self.log("⚠ No decks loaded, cannot sync")
+            self.status_label.setText("⚠ No decks loaded")
+            return
+        
+        self.log(f"\n=== Starting sync for {len(self.decks)} deck(s) ===")
         decks_to_sync = []
         
         for deck in self.decks:
             deck_id = self.get_deck_id(deck)
+            deck_title = deck.get('title', 'Unknown')
+            
+            if not deck_id:
+                self.log(f"⚠ '{deck_title}': No ID, skipping")
+                continue
             
             if not config.is_deck_downloaded(deck_id):
+                self.log(f"✓ '{deck_title}': Not downloaded, adding to sync")
                 decks_to_sync.append(deck)
             else:
                 current_version = self.get_deck_version(deck)
                 saved_version = config.get_deck_version(deck_id)
+                self.log(f"  '{deck_title}': Downloaded (saved: {saved_version}, current: {current_version})")
                 if current_version != saved_version:
+                    self.log(f"✓ '{deck_title}': Update available, adding to sync")
                     decks_to_sync.append(deck)
         
+        self.log(f"Total decks to sync: {len(decks_to_sync)}")
+        
         if not decks_to_sync:
+            self.log("⚠ No decks need syncing")
+            self.status_label.setText("✓ All decks are up to date")
             return
         
         reply = QMessageBox.question(
@@ -604,6 +681,13 @@ class MinimalNottorneyDialog(QDialog):
         success_count = 0
         failed = []
         
+        if not decks:
+            self.log("⚠ No decks to download")
+            self.is_syncing = False
+            self.progress.hide()
+            self.sync_btn.setEnabled(True)
+            return
+        
         batch_size = 10
         total_batches = (len(decks) + batch_size - 1) // batch_size
         
@@ -615,13 +699,40 @@ class MinimalNottorneyDialog(QDialog):
             
             self.log(f"\n=== Batch {batch_num}/{total_batches} ({len(batch)} decks) ===")
             
-            deck_ids = [self.get_deck_id(d) for d in batch]
+            # Extract deck IDs with validation
+            deck_ids = []
+            for deck in batch:
+                deck_id = self.get_deck_id(deck)
+                deck_title = deck.get('title', 'Unknown')
+                if deck_id:
+                    deck_ids.append(deck_id)
+                    self.log(f"  Deck '{deck_title}': ID = {deck_id}")
+                else:
+                    failed.append(f"{deck_title}: No deck ID found")
+                    self.log(f"  ✗ Deck '{deck_title}': No ID found")
+            
+            if not deck_ids:
+                self.log("⚠ No valid deck IDs in this batch, skipping")
+                continue
+            
+            self.log(f"Requesting batch download for {len(deck_ids)} deck(s)...")
             
             try:
                 result = api.batch_download_decks(deck_ids)
+                self.log(f"Batch API response: success={result.get('success')}")
                 
                 if result.get('success'):
                     downloads = result.get('downloads', [])
+                    self.log(f"Received {len(downloads)} download response(s)")
+                    
+                    if not downloads:
+                        self.log("⚠ No downloads in response, checking failed list...")
+                        failed_items = result.get('failed', [])
+                        if failed_items:
+                            self.log(f"Found {len(failed_items)} failed items")
+                        else:
+                            self.log("⚠ No downloads and no failed items - unexpected response")
+                            self.log(f"Full response: {result}")
                     
                     for i, download in enumerate(downloads):
                         if download.get('success'):
@@ -630,38 +741,71 @@ class MinimalNottorneyDialog(QDialog):
                             version = download.get('version', '1.0')
                             download_url = download.get('download_url')
                             
+                            if not download_url:
+                                error_msg = "No download URL in response"
+                                failed.append(f"{title}: {error_msg}")
+                                self.log(f"✗ {title}: {error_msg}")
+                                continue
+                            
                             self.progress.setValue(batch_idx + i)
                             self.progress.setFormat(f"Downloading: {title[:30]}...")
-                            self.log(f"Downloading: {title}")
+                            self.log(f"Downloading: {title} (URL: {download_url[:50]}...)")
                             
                             try:
+                                self.log(f"  → Fetching deck file...")
                                 deck_content = api.download_deck_file(download_url)
+                                self.log(f"  → Downloaded {len(deck_content)} bytes")
+                                
+                                self.log(f"  → Importing into Anki...")
                                 anki_deck_id = import_deck(deck_content, title)
+                                self.log(f"  → Imported as Anki deck ID: {anki_deck_id}")
+                                
+                                self.log(f"  → Saving tracking info...")
                                 config.save_downloaded_deck(deck_id, version, anki_deck_id)
                                 
                                 success_count += 1
-                                self.log(f"✓ {title}")
+                                self.log(f"✓ {title} - Complete!")
                             except Exception as e:
-                                failed.append(f"{title}: {str(e)}")
+                                import traceback
+                                error_details = traceback.format_exc()
                                 self.log(f"✗ {title}: {e}")
+                                self.log(f"Error details:\n{error_details}")
+                                failed.append(f"{title}: {str(e)}")
                         else:
                             title = download.get('title', 'Unknown')
                             error = download.get('error', 'Unknown error')
                             failed.append(f"{title}: {error}")
                             self.log(f"✗ {title}: {error}")
+                            self.log(f"  Failed download response: {download}")
                     
-                    for fail in result.get('failed', []):
-                        title = fail.get('title', 'Unknown')
-                        error = fail.get('error', 'Unknown error')
-                        failed.append(f"{title}: {error}")
-                        self.log(f"✗ {title}: {error}")
+                    # Check for failed items in response
+                    failed_items = result.get('failed', [])
+                    if failed_items:
+                        self.log(f"Processing {len(failed_items)} failed item(s)...")
+                        for fail in failed_items:
+                            title = fail.get('title', 'Unknown')
+                            error = fail.get('error', 'Unknown error')
+                            failed.append(f"{title}: {error}")
+                            self.log(f"✗ {title}: {error}")
+                else:
+                    error_msg = result.get('error', 'Batch download failed')
+                    self.log(f"✗ Batch API returned success=false: {error_msg}")
+                    self.log(f"Full response: {result}")
+                    for deck in batch:
+                        failed.append(f"{deck.get('title', 'Unknown')}: {error_msg}")
                 
             except NottorneyAPIError as e:
-                self.log(f"✗ Batch {batch_num} failed: {e}")
+                error_msg = str(e)
+                self.log(f"✗ Batch {batch_num} API error: {error_msg}")
+                import traceback
+                self.log(traceback.format_exc())
                 for deck in batch:
-                    failed.append(f"{deck.get('title', 'Unknown')}: Batch request failed")
+                    failed.append(f"{deck.get('title', 'Unknown')}: {error_msg}")
             except Exception as e:
+                import traceback
+                error_details = traceback.format_exc()
                 self.log(f"✗ Unexpected error in batch {batch_num}: {e}")
+                self.log(f"Error details:\n{error_details}")
                 for deck in batch:
                     failed.append(f"{deck.get('title', 'Unknown')}: {str(e)}")
         
@@ -737,3 +881,24 @@ class MinimalNottorneyDialog(QDialog):
         
         decks_to_download = [item.data(Qt.ItemDataRole.UserRole) for item in selected]
         self.batch_download_decks(decks_to_download)
+    
+    def get_deck_id(self, deck):
+        """Extract deck ID from deck object"""
+        if not deck:
+            return None
+        
+        # Try common field names for deck ID
+        deck_id = deck.get('id') or deck.get('deck_id') or deck.get('deckId')
+        
+        # Debug: log if we can't find the ID
+        if not deck_id:
+            self.log(f"⚠ Warning: Could not extract deck_id from deck: {list(deck.keys())}")
+        
+        return deck_id
+    
+    def get_deck_version(self, deck):
+        """Extract version from deck object"""
+        if not deck:
+            return None
+        # Try common field names for version
+        return deck.get('version') or deck.get('current_version') or deck.get('currentVersion')

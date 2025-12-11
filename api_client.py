@@ -149,12 +149,32 @@ class NottorneyAPI:
         """Get list of decks purchased by the user"""
         result = self._make_request('POST', '/addon-get-purchases', data={}, include_auth=True)
         
-        if result.get('success'):
-            decks = result.get('purchases', [])
-            print(f"Retrieved {len(decks)} decks")
-            return decks
+        # Debug: Log the full response structure
+        print(f"=== get_purchased_decks response ===")
+        print(f"Response keys: {list(result.keys())}")
+        print(f"Success: {result.get('success')}")
         
-        raise NottorneyAPIError(result.get('error', 'Failed to get purchased decks'))
+        if result.get('success'):
+            # Try multiple possible keys for the deck list
+            decks = result.get('purchases', [])
+            if not decks:
+                decks = result.get('decks', [])
+            if not decks:
+                decks = result.get('data', [])
+            if not decks and 'purchases' in result:
+                # purchases might be None instead of empty list
+                decks = result.get('purchases') or []
+            
+            print(f"Retrieved {len(decks)} decks")
+            if len(decks) > 0:
+                print(f"First deck keys: {list(decks[0].keys()) if isinstance(decks[0], dict) else 'Not a dict'}")
+            else:
+                print(f"⚠ Empty deck list - full response: {result}")
+            
+            return decks if isinstance(decks, list) else []
+        
+        error_msg = result.get('error') or result.get('message') or 'Failed to get purchased decks'
+        raise NottorneyAPIError(error_msg)
     
     def check_updates(self) -> Dict:
         """Check for updates on all purchased decks"""
