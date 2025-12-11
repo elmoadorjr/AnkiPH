@@ -10,7 +10,7 @@ try:
     from . ui. single_dialog import MinimalNottorneyDialog
     from .config import config
     from .  import sync
-    from . api_client import api
+    from .api_client import api
 except ImportError as e:
     def show_error():
         showInfo(f"Nottorney addon error: {str(e)}")
@@ -41,4 +41,5 @@ def setup_menu():
     menu.addAction(action)
 
 
-gui_hooks.profile_loaded. append(setup_menu)
+# Setup menu when Anki loads
+setup_menu()
