@@ -1,6 +1,6 @@
 """
 Configuration management for the Nottorney addon
-FIXED VERSION - Better deck tracking and cleanup + properly handles Anki deck IDs
+UPDATED: Added notification tracking and last check timestamp
 """
 
 from aqt import mw
@@ -49,7 +49,9 @@ class Config:
             "refresh_token": None,
             "expires_at": None,
             "user": None,
-            "ui_mode": "minimal"
+            "ui_mode": "minimal",
+            "last_notification_check": None,
+            "unread_notification_count": 0
         }
     
     def _save_config(self, data):
@@ -171,7 +173,42 @@ class Config:
             'https://ladvckxztcleljbiomcf.supabase.co/functions/v1')
         return url.rstrip('/')
     
-    # === DOWNLOADED DECKS TRACKING - FIXED ===
+    # === NOTIFICATIONS ===
+    
+    def get_last_notification_check(self):
+        """Get timestamp of last notification check"""
+        return self._get_config().get('last_notification_check')
+    
+    def update_last_notification_check(self):
+        """Update last notification check timestamp to now"""
+        cfg = self._get_config()
+        cfg['last_notification_check'] = datetime.now().isoformat()
+        return self._save_config(cfg)
+    
+    def get_unread_notification_count(self):
+        """Get cached unread notification count"""
+        return self._get_config().get('unread_notification_count', 0)
+    
+    def set_unread_notification_count(self, count):
+        """Update cached unread notification count"""
+        cfg = self._get_config()
+        cfg['unread_notification_count'] = max(0, int(count))
+        return self._save_config(cfg)
+    
+    def should_check_notifications(self, interval_minutes=15):
+        """Check if enough time has passed to check notifications again"""
+        last_check = self.get_last_notification_check()
+        if not last_check:
+            return True
+        
+        try:
+            last_check_time = datetime.fromisoformat(last_check)
+            time_since_check = (datetime.now() - last_check_time).total_seconds() / 60
+            return time_since_check >= interval_minutes
+        except (ValueError, TypeError):
+            return True
+    
+    # === DOWNLOADED DECKS TRACKING ===
     
     def save_downloaded_deck(self, deck_id, version, anki_deck_id):
         """
@@ -201,7 +238,7 @@ class Config:
         
         cfg['downloaded_decks'][deck_id] = {
             'version': version,
-            'anki_deck_id': anki_deck_id,  # Now guaranteed to be int
+            'anki_deck_id': anki_deck_id,
             'downloaded_at': datetime.now().isoformat()
         }
         
@@ -226,7 +263,6 @@ class Config:
     def is_deck_downloaded(self, deck_id):
         """
         Check if a deck is downloaded AND still exists in Anki
-        FIXED: Handles integer anki_deck_id properly
         """
         if not deck_id:
             return False
@@ -259,10 +295,7 @@ class Config:
         return deck_info.get('version')
     
     def get_deck_anki_id(self, deck_id):
-        """
-        Get the Anki deck ID for a downloaded deck
-        FIXED: Returns integer ID
-        """
+        """Get the Anki deck ID for a downloaded deck"""
         if not deck_id:
             return None
         
@@ -316,10 +349,7 @@ class Config:
         return success
     
     def _verify_deck_exists(self, anki_deck_id):
-        """
-        Verify that a deck exists in Anki's collection
-        FIXED: Properly handles integer deck IDs
-        """
+        """Verify that a deck exists in Anki's collection"""
         try:
             if not mw or not mw.col:
                 print(f"⚠ Cannot verify deck {anki_deck_id}: collection not available")

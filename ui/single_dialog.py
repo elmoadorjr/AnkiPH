@@ -1,6 +1,6 @@
 """
-Minimalist Nottorney Dialog - FIXED VERSION
-Includes automatic cleanup of deleted decks on startup
+Minimalist Nottorney Dialog - UPDATED WITH NOTIFICATIONS
+Includes automatic cleanup and notification checking
 """
 
 from aqt.qt import (
@@ -71,6 +71,17 @@ QPushButton#secondary {
 QPushButton#secondary:hover {
     color: #aaa;
 }
+QPushButton#notification {
+    background-color: #ff5722;
+    border: none;
+    color: white;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: bold;
+}
+QPushButton#notification:hover {
+    background-color: #f4511e;
+}
 QLineEdit {
     background-color: #2a2a2a;
     border: 1px solid #404040;
@@ -124,7 +135,7 @@ QTextEdit {
 
 
 class MinimalNottorneyDialog(QDialog):
-    """Single dialog for all Nottorney operations with automatic cleanup"""
+    """Single dialog for all Nottorney operations with notifications"""
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -188,6 +199,13 @@ class MinimalNottorneyDialog(QDialog):
         # Bottom actions
         bottom = QHBoxLayout()
         
+        # Notification button (hidden by default)
+        self.notif_btn = QPushButton("🔔")
+        self.notif_btn.setObjectName("notification")
+        self.notif_btn.clicked.connect(self.show_notifications)
+        self.notif_btn.setToolTip("View notifications")
+        self.notif_btn.hide()
+        
         self.cleanup_btn = QPushButton("Clean Tracking")
         self.cleanup_btn.setObjectName("secondary")
         self.cleanup_btn.clicked.connect(self.manual_cleanup)
@@ -206,6 +224,7 @@ class MinimalNottorneyDialog(QDialog):
         self.close_btn.setObjectName("secondary")
         self.close_btn.clicked.connect(self.accept)
         
+        bottom.addWidget(self.notif_btn)
         bottom.addWidget(self.cleanup_btn)
         bottom.addWidget(self.log_btn)
         bottom.addWidget(self.advanced_btn)
@@ -356,6 +375,43 @@ class MinimalNottorneyDialog(QDialog):
         except Exception as e:
             QMessageBox.warning(self, "Cleanup Error", f"Error during cleanup:\n\n{str(e)}")
     
+    def check_notifications_silent(self):
+        """Silently check for notifications and update UI"""
+        if not config.is_logged_in():
+            return
+        
+        try:
+            self.log("Checking notifications...")
+            result = api.check_notifications(mark_as_read=False, limit=5)
+            
+            if result.get('success'):
+                unread_count = result.get('unread_count', 0)
+                config.set_unread_notification_count(unread_count)
+                config.update_last_notification_check()
+                
+                self.log(f"Found {unread_count} unread notification(s)")
+                
+                # Update notification button
+                if unread_count > 0:
+                    self.notif_btn.setText(f"🔔 {unread_count}")
+                    self.notif_btn.show()
+                else:
+                    self.notif_btn.setText("🔔")
+                    # Still show button when logged in, even if no unread
+                    self.notif_btn.show()
+        except Exception as e:
+            self.log(f"Notification check failed: {e}")
+    
+    def show_notifications(self):
+        """Show notifications dialog"""
+        from .notifications_dialog import NotificationsDialog
+        
+        dialog = NotificationsDialog(mw)
+        dialog.exec()
+        
+        # Refresh notification count after viewing
+        self.check_notifications_silent()
+    
     def check_login(self):
         """Check login state"""
         is_logged_in = config.is_logged_in()
@@ -363,6 +419,8 @@ class MinimalNottorneyDialog(QDialog):
         
         if is_logged_in:
             self.show_sync_interface()
+            # Check notifications after showing interface
+            self.check_notifications_silent()
         else:
             self.show_login_interface()
     
@@ -374,6 +432,7 @@ class MinimalNottorneyDialog(QDialog):
         self.sync_widget.hide()
         self.advanced_widget.hide()
         self.advanced_btn.hide()
+        self.notif_btn.hide()
         self.email_input.setFocus()
     
     def show_sync_interface(self):
@@ -411,6 +470,8 @@ class MinimalNottorneyDialog(QDialog):
             if result.get('success'):
                 self.log("Login successful")
                 self.show_sync_interface()
+                # Check notifications after login
+                self.check_notifications_silent()
             else:
                 error = result.get('error', 'Login failed')
                 self.log(f"Login failed: {error}")
@@ -445,6 +506,7 @@ class MinimalNottorneyDialog(QDialog):
         
         if reply == QMessageBox.StandardButton.Yes:
             config.clear_tokens()
+            config.set_unread_notification_count(0)
             self.log("Logged out")
             self.check_login()
     

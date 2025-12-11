@@ -1,6 +1,7 @@
 """
 API client for the Nottorney backend
 Handles all HTTP requests to your API
+UPDATED: Added notifications endpoint support
 """
 
 import requests
@@ -341,6 +342,47 @@ class NottorneyAPI:
             return {"success": False, "synced_count": 0}
         
         raise NottorneyAPIError(result.get('error', 'Failed to sync progress'))
+    
+    # NEW: Notifications endpoint
+    def check_notifications(self, mark_as_read: bool = False, limit: int = 10) -> Dict:
+        """
+        Check for unread notifications
+        
+        Args:
+            mark_as_read: If True, mark returned notifications as read
+            limit: Maximum number of notifications to return (default: 10)
+        
+        Returns: {
+            "success": true,
+            "notifications": [{
+                "id": "uuid",
+                "type": "deck_update" | "announcement",
+                "title": "Notification Title",
+                "message": "Notification message",
+                "created_at": "ISO 8601 timestamp",
+                "read": false,
+                "metadata": {...}
+            }],
+            "unread_count": 5,
+            "total_count": 20
+        }
+        """
+        data = {
+            'mark_as_read': mark_as_read,
+            'limit': limit
+        }
+        
+        print(f"Checking notifications (limit={limit}, mark_as_read={mark_as_read})")
+        
+        result = self._make_request('POST', '/addon-check-notifications', data, include_auth=True)
+        
+        if result.get('success'):
+            notifications = result.get('notifications', [])
+            unread_count = result.get('unread_count', 0)
+            print(f"Retrieved {len(notifications)} notification(s), {unread_count} unread")
+            return result
+        
+        raise NottorneyAPIError(result.get('error', 'Failed to check notifications'))
 
 
 # Global API client instance

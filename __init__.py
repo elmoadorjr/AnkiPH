@@ -1,6 +1,7 @@
 """
 Nottorney Anki Addon
-Main entry point with MINIMALIST dialog option
+Main entry point with notification support
+UPDATED: Added automatic notification checking and display
 """
 
 from aqt import mw, gui_hooks
@@ -12,7 +13,8 @@ try:
     from .ui.login_dialog import LoginDialog
     from .ui.deck_manager_dialog import DeckManagerDialog
     from .ui.sync_dialog import SyncDialog
-    from .ui.single_dialog import MinimalNottorneyDialog  # NEW
+    from .ui.single_dialog import MinimalNottorneyDialog
+    from .ui.notifications_dialog import NotificationsDialog  # NEW
     from .config import config
     from . import sync
     from .api_client import api
@@ -33,8 +35,7 @@ except ImportError as e:
 ADDON_NAME = "Nottorney"
 ADDON_VERSION = "1.0.0"
 
-# UI Mode Setting - Choose your preferred interface style
-# Options: "minimal", "classic", "auto-sync"
+# UI Mode Setting
 UI_MODE = config.get_ui_mode() if hasattr(config, 'get_ui_mode') else "minimal"
 
 # Global menu reference
@@ -70,15 +71,59 @@ def ensure_valid_token():
     return True
 
 
+def check_notifications_background():
+    """Background notification check (silent)"""
+    if not config.is_logged_in():
+        return
+    
+    # Only check if enough time has passed
+    if not config.should_check_notifications(interval_minutes=15):
+        return
+    
+    try:
+        print("=== Background notification check ===")
+        result = api.check_notifications(mark_as_read=False, limit=5)
+        
+        if result.get('success'):
+            unread_count = result.get('unread_count', 0)
+            config.set_unread_notification_count(unread_count)
+            config.update_last_notification_check()
+            
+            print(f"Notifications: {unread_count} unread")
+            
+            # Update menu to show notification badge
+            update_menu()
+            
+    except Exception as e:
+        print(f"Background notification check failed: {e}")
+
+
+def show_notifications():
+    """Show notifications dialog"""
+    print("=== Opening Notifications ===")
+    
+    if not ensure_valid_token():
+        print("Token validation failed, showing login")
+        showInfo("Your session has expired. Please login again.")
+        show_login()
+        return
+    
+    dialog = NotificationsDialog(mw)
+    dialog.exec()
+    
+    # Update menu after viewing notifications
+    update_menu()
+
+
 def show_minimal_dialog():
-    """Show the minimalist single-dialog interface (RECOMMENDED)"""
+    """Show the minimalist single-dialog interface"""
     print("=== Opening Minimal Dialog ===")
     dialog = MinimalNottorneyDialog(mw)
     dialog.exec()
 
 
 def show_login():
-    """Show the login dialog (CLASSIC)"""
+    """Show the login dialog"""
     dialog = LoginDialog(mw)
     if dialog.exec():
         user = config.get_user()
@@ -88,11 +133,13 @@ def show_login():
         else:
             showInfo("Login successful!")
         
+        # Check for notifications after login
+        check_notifications_background()
         update_menu()
 
 
 def show_sync_decks():
-    """Show the auto-sync dialog for one-click deck syncing (CLASSIC)"""
+    """Show the auto-sync dialog"""
     print("=== Opening Sync Decks Dialog ===")
     
     if not ensure_valid_token():
@@ -107,7 +154,7 @@ def show_sync_decks():
 
 
 def show_deck_manager():
-    """Show the deck manager dialog (CLASSIC - for advanced users)"""
+    """Show the deck manager dialog"""
     print("=== Opening Deck Manager ===")
     
     if not ensure_valid_token():
@@ -147,6 +194,7 @@ def logout():
     """Logout the user"""
     print("=== Logging out ===")
     config.clear_tokens()
+    config.set_unread_notification_count(0)
     showInfo("Logged out successfully")
     update_menu()
 
@@ -185,10 +233,22 @@ def update_menu():
     
     # === MINIMAL MODE ===
     if UI_MODE == "minimal":
-        # Just one action - open the minimal dialog
+        # Main action
         main_action = QAction("🎯 Open Nottorney", mw)
         main_action.triggered.connect(show_minimal_dialog)
         nottorney_menu.addAction(main_action)
+        
+        # Notifications (if logged in)
+        if is_logged_in:
+            unread_count = config.get_unread_notification_count()
+            if unread_count > 0:
+                notif_text = f"🔔 Notifications ({unread_count})"
+            else:
+                notif_text = "🔔 Notifications"
+            
+            notif_action = QAction(notif_text, mw)
+            notif_action.triggered.connect(show_notifications)
+            nottorney_menu.addAction(notif_action)
         
         nottorney_menu.addSeparator()
         
@@ -209,6 +269,19 @@ def update_menu():
             user_label.setEnabled(False)
             nottorney_menu.addAction(user_label)
             nottorney_menu.addSeparator()
+        
+        # Notifications
+        unread_count = config.get_unread_notification_count()
+        if unread_count > 0:
+            notif_text = f"🔔 Notifications ({unread_count})"
+        else:
+            notif_text = "🔔 Notifications"
+        
+        notif_action = QAction(notif_text, mw)
+        notif_action.triggered.connect(show_notifications)
+        nottorney_menu.addAction(notif_action)
+        
+        nottorney_menu.addSeparator()
         
         # Sync Decks action (PRIMARY)
         sync_decks_action = QAction("🔄 Sync My Decks", mw)
@@ -277,7 +350,7 @@ def setup_menu():
     # Create main menu with mode indicator
     menu_title = "⚖️ Nottorney"
     if UI_MODE == "minimal":
-        menu_title += " 🎯"  # Minimal mode indicator
+        menu_title += " 🎯"
     
     nottorney_menu = mw.form.menuTools.addMenu(menu_title)
     
@@ -285,19 +358,11 @@ def setup_menu():
     update_menu()
 
 
-def safe_auto_sync():
-    """Safely attempt auto-sync without showing errors"""
-    return
-    
-    print("=== Auto-sync triggered ===")
-    try:
-        if ensure_valid_token():
-            sync.sync_progress()
-            print("Auto-sync completed")
-        else:
-            print("Auto-sync skipped: not logged in")
-    except Exception as e:
-        print(f"Auto-sync failed: {e}")
+def on_profile_loaded():
+    """Hook that runs when Anki profile is loaded"""
+    if config.is_logged_in():
+        # Check notifications in background
+        check_notifications_background()
 
 
 def init_addon():
@@ -317,6 +382,9 @@ def init_addon():
         print("User not logged in")
     
     setup_menu()
+    
+    # Register hook for notification checking
+    gui_hooks.profile_did_open.append(on_profile_loaded)
     
     print("=== Nottorney Addon Initialized ===")
 
