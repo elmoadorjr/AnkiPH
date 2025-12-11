@@ -168,10 +168,19 @@ class Config:
     # === API SETTINGS ===
     
     def get_api_url(self):
-        """Get the API base URL"""
+        """
+        Get the API base URL
+        Default: Supabase edge functions URL
+        """
         url = self._get_config().get('api_url', 
             'https://ladvckxztcleljbiomcf.supabase.co/functions/v1')
-        return url.rstrip('/')
+        url = url.rstrip('/')
+        
+        # Validate URL format
+        if not url.startswith('http'):
+            print(f"⚠ Warning: API URL doesn't start with http: {url}")
+        
+        return url
     
     # === NOTIFICATIONS ===
     

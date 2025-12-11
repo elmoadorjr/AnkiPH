@@ -883,16 +883,21 @@ class MinimalNottorneyDialog(QDialog):
         self.batch_download_decks(decks_to_download)
     
     def get_deck_id(self, deck):
-        """Extract deck ID from deck object"""
+        """
+        Extract deck ID from deck object
+        Handles multiple possible field names: deck_id, id, deckId
+        """
         if not deck:
             return None
         
-        # Try common field names for deck ID
-        deck_id = deck.get('id') or deck.get('deck_id') or deck.get('deckId')
+        # Try common field names for deck ID (priority order)
+        deck_id = deck.get('deck_id') or deck.get('id') or deck.get('deckId')
         
         # Debug: log if we can't find the ID
         if not deck_id:
-            self.log(f"⚠ Warning: Could not extract deck_id from deck: {list(deck.keys())}")
+            available_keys = list(deck.keys()) if isinstance(deck, dict) else 'Not a dict'
+            self.log(f"⚠ Warning: Could not extract deck_id from deck. Available keys: {available_keys}")
+            self.log(f"  Full deck object: {deck}")
         
         return deck_id
     

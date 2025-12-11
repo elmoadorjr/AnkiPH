@@ -19,6 +19,10 @@ class NottorneyAPI:
     def __init__(self):
         self.base_url = config.get_api_url()
         self._refreshing_token = False
+        
+        # Log API URL on initialization for debugging
+        print(f"=== NottorneyAPI initialized ===")
+        print(f"Base URL: {self.base_url}")
     
     def _get_headers(self, include_auth=False):
         """Get request headers"""
@@ -243,14 +247,55 @@ class NottorneyAPI:
         raise NottorneyAPIError(result.get('error', 'Failed to get changelog'))
     
     def download_deck_file(self, download_url: str) -> bytes:
-        """Download the actual deck file from the download URL"""
+        """
+        Download the actual deck file from the download URL
+        Handles Supabase signed URLs and validates content type
+        """
+        if not download_url:
+            raise NottorneyAPIError("Download URL is required")
+        
+        print(f"=== Downloading deck file ===")
+        print(f"URL: {download_url[:100]}...")
+        
         try:
-            print(f"Downloading deck file from URL...")
-            response = requests.get(download_url, timeout=120, stream=True)
+            # Validate URL format (Supabase signed URLs should have query params)
+            if '?' not in download_url and 'token=' not in download_url:
+                print("⚠ Warning: URL doesn't appear to be a signed URL")
+            
+            # Make request with streaming for large files
+            response = requests.get(download_url, timeout=120, stream=True, allow_redirects=True)
+            
+            # Check HTTP status
             response.raise_for_status()
             
+            # Validate Content-Type - should be application/zip or application/octet-stream for .apkg
+            content_type = response.headers.get('Content-Type', '').lower()
+            print(f"Content-Type: {content_type}")
+            
+            # Check if we got an error page instead of a file
+            if 'text/html' in content_type or 'application/json' in content_type:
+                # Try to read error message
+                try:
+                    error_text = response.text[:500]
+                    print(f"⚠ Got HTML/JSON instead of file: {error_text}")
+                    if 'error' in error_text.lower() or 'expired' in error_text.lower():
+                        raise NottorneyAPIError(f"Signed URL may be expired or invalid. Response: {error_text[:200]}")
+                except:
+                    pass
+                raise NottorneyAPIError(f"Received {content_type} instead of deck file. URL may be expired or invalid.")
+            
+            # Validate expected content types for .apkg files
+            valid_types = ['application/zip', 'application/octet-stream', 'application/x-zip-compressed']
+            if content_type and not any(ct in content_type for ct in valid_types):
+                print(f"⚠ Warning: Unexpected Content-Type: {content_type}")
+            
+            # Download content in chunks
             content = b''
             chunk_count = 0
+            total_size = int(response.headers.get('Content-Length', 0))
+            
+            print(f"Downloading {total_size} bytes..." if total_size else "Downloading...")
+            
             for chunk in response.iter_content(chunk_size=8192):
                 if chunk:
                     content += chunk
@@ -258,12 +303,47 @@ class NottorneyAPI:
                     if chunk_count % 100 == 0:
                         print(f"Downloaded {len(content)} bytes...")
             
-            print(f"Download complete: {len(content)} bytes")
+            # Validate we got actual content
+            if len(content) == 0:
+                raise NottorneyAPIError("Downloaded file is empty")
+            
+            # Basic validation: .apkg files are ZIP archives, should start with PK (ZIP signature)
+            if len(content) >= 2 and content[:2] != b'PK':
+                print(f"⚠ Warning: File doesn't start with ZIP signature (PK). First bytes: {content[:20]}")
+                # Don't fail here, as some files might be valid but encoded differently
+            
+            print(f"✓ Download complete: {len(content)} bytes")
             return content
+            
+        except requests.exceptions.Timeout:
+            raise NottorneyAPIError("Download timed out after 120 seconds. The file may be too large or the connection is slow.")
         except requests.exceptions.HTTPError as e:
-            raise NottorneyAPIError(f"Failed to download: HTTP {e.response.status_code}")
+            status_code = e.response.status_code if e.response else 'unknown'
+            error_msg = f"HTTP {status_code}"
+            
+            # Try to get error details from response
+            try:
+                if e.response:
+                    error_text = e.response.text[:200]
+                    if error_text:
+                        error_msg += f": {error_text}"
+            except:
+                pass
+            
+            print(f"✗ HTTP Error: {error_msg}")
+            raise NottorneyAPIError(f"Failed to download: {error_msg}")
+        except requests.exceptions.ConnectionError as e:
+            raise NottorneyAPIError(f"Connection error: {str(e)}. Check your internet connection.")
         except requests.exceptions.RequestException as e:
+            print(f"✗ Request error: {e}")
             raise NottorneyAPIError(f"Failed to download: {str(e)}")
+        except NottorneyAPIError:
+            raise
+        except Exception as e:
+            print(f"✗ Unexpected error: {e}")
+            import traceback
+            print(traceback.format_exc())
+            raise NottorneyAPIError(f"Unexpected error during download: {str(e)}")
     
     def sync_progress(self, progress_data: List[Dict]) -> Dict:
         """Sync study progress to the server"""
