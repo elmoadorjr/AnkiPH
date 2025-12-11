@@ -1,141 +1,73 @@
 """
-Minimalist Nottorney Dialog - UPDATED WITH NOTIFICATIONS
-Includes automatic cleanup and notification checking
+Enhanced Minimal Dialog with Batch Download & Changelog Support
+Now uses /addon-batch-download and /addon-get-changelog endpoints
 """
 
 from aqt.qt import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QProgressBar, QLineEdit, QListWidget, QListWidgetItem,
-    QMessageBox, Qt, QWidget, QTextEdit
+    QMessageBox, Qt, QWidget, QTextEdit, QScrollArea
 )
 from aqt import mw
 from ..api_client import api, NottorneyAPIError
 from ..config import config
 from ..deck_importer import import_deck
 
-# Minimalist stylesheet
+# Minimalist stylesheet (same as before)
 MINIMAL_STYLE = """
-QDialog {
-    background-color: #1a1a1a;
-    color: #e0e0e0;
-}
-QLabel {
-    color: #e0e0e0;
-    font-size: 14px;
-}
-QLabel#title {
-    font-size: 24px;
-    font-weight: bold;
-    color: #ffffff;
-}
-QLabel#status {
-    color: #888;
-    font-size: 13px;
-}
+QDialog { background-color: #1a1a1a; color: #e0e0e0; }
+QLabel { color: #e0e0e0; font-size: 14px; }
+QLabel#title { font-size: 24px; font-weight: bold; color: #ffffff; }
+QLabel#status { color: #888; font-size: 13px; }
 QPushButton {
-    background-color: #2a2a2a;
-    border: 1px solid #404040;
-    border-radius: 6px;
-    padding: 12px 24px;
-    color: #e0e0e0;
-    font-size: 14px;
+    background-color: #2a2a2a; border: 1px solid #404040;
+    border-radius: 6px; padding: 12px 24px; color: #e0e0e0; font-size: 14px;
 }
-QPushButton:hover {
-    background-color: #333;
-    border-color: #555;
-}
-QPushButton:disabled {
-    background-color: #1a1a1a;
-    color: #555;
-}
+QPushButton:hover { background-color: #333; border-color: #555; }
+QPushButton:disabled { background-color: #1a1a1a; color: #555; }
 QPushButton#primary {
-    background-color: #4caf50;
-    border: none;
-    color: white;
-    font-weight: bold;
+    background-color: #4caf50; border: none; color: white; font-weight: bold;
 }
-QPushButton#primary:hover {
-    background-color: #45a049;
-}
-QPushButton#primary:disabled {
-    background-color: #2a4a2b;
-    color: #666;
-}
+QPushButton#primary:hover { background-color: #45a049; }
+QPushButton#primary:disabled { background-color: #2a4a2b; color: #666; }
 QPushButton#secondary {
-    background-color: transparent;
-    border: none;
-    color: #888;
-    padding: 8px 16px;
-    font-size: 13px;
+    background-color: transparent; border: none; color: #888;
+    padding: 8px 16px; font-size: 13px;
 }
-QPushButton#secondary:hover {
-    color: #aaa;
-}
+QPushButton#secondary:hover { color: #aaa; }
 QPushButton#notification {
-    background-color: #ff5722;
-    border: none;
-    color: white;
-    padding: 8px 16px;
-    font-size: 13px;
-    font-weight: bold;
+    background-color: #ff5722; border: none; color: white;
+    padding: 8px 16px; font-size: 13px; font-weight: bold;
 }
-QPushButton#notification:hover {
-    background-color: #f4511e;
-}
+QPushButton#notification:hover { background-color: #f4511e; }
 QLineEdit {
-    background-color: #2a2a2a;
-    border: 1px solid #404040;
-    border-radius: 6px;
-    padding: 10px;
-    color: #e0e0e0;
-    font-size: 14px;
+    background-color: #2a2a2a; border: 1px solid #404040;
+    border-radius: 6px; padding: 10px; color: #e0e0e0; font-size: 14px;
 }
-QLineEdit:focus {
-    border-color: #4caf50;
-}
+QLineEdit:focus { border-color: #4caf50; }
 QProgressBar {
-    border: 1px solid #404040;
-    border-radius: 6px;
-    background-color: #2a2a2a;
-    text-align: center;
-    color: #e0e0e0;
-    height: 24px;
+    border: 1px solid #404040; border-radius: 6px;
+    background-color: #2a2a2a; text-align: center;
+    color: #e0e0e0; height: 24px;
 }
-QProgressBar::chunk {
-    background-color: #4caf50;
-    border-radius: 5px;
-}
+QProgressBar::chunk { background-color: #4caf50; border-radius: 5px; }
 QListWidget {
-    background-color: #2a2a2a;
-    border: 1px solid #404040;
-    border-radius: 6px;
-    outline: none;
-    color: #e0e0e0;
+    background-color: #2a2a2a; border: 1px solid #404040;
+    border-radius: 6px; outline: none; color: #e0e0e0;
 }
-QListWidget::item {
-    padding: 12px;
-    border-bottom: 1px solid #333;
-}
-QListWidget::item:hover {
-    background-color: #333;
-}
-QListWidget::item:selected {
-    background-color: #4caf50;
-    color: white;
-}
+QListWidget::item { padding: 12px; border-bottom: 1px solid #333; }
+QListWidget::item:hover { background-color: #333; }
+QListWidget::item:selected { background-color: #4caf50; color: white; }
 QTextEdit {
-    background-color: #1a1a1a;
-    color: #00ff00;
-    border: 1px solid #404040;
-    border-radius: 6px;
-    font-family: monospace;
-    font-size: 11px;
+    background-color: #1a1a1a; color: #00ff00;
+    border: 1px solid #404040; border-radius: 6px;
+    font-family: monospace; font-size: 11px;
 }
 """
 
 
 class MinimalNottorneyDialog(QDialog):
-    """Single dialog for all Nottorney operations with notifications"""
+    """Enhanced minimal dialog with batch download & changelog"""
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -149,10 +81,7 @@ class MinimalNottorneyDialog(QDialog):
         self.show_log = False
         
         self.setup_ui()
-        
-        # CRITICAL: Run cleanup BEFORE checking login
         self.run_startup_cleanup()
-        
         self.check_login()
     
     def setup_ui(self):
@@ -297,14 +226,24 @@ class MinimalNottorneyDialog(QDialog):
         
         self.deck_list = QListWidget()
         self.deck_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
+        self.deck_list.itemDoubleClicked.connect(self.show_deck_changelog)
+        
+        btn_layout = QHBoxLayout()
         
         download_btn = QPushButton("Download Selected")
         download_btn.setObjectName("primary")
         download_btn.clicked.connect(self.download_selected)
         
+        changelog_btn = QPushButton("View Changelog")
+        changelog_btn.setObjectName("secondary")
+        changelog_btn.clicked.connect(lambda: self.show_deck_changelog(self.deck_list.currentItem()))
+        
+        btn_layout.addWidget(download_btn)
+        btn_layout.addWidget(changelog_btn)
+        
         layout.addWidget(self.search_input)
         layout.addWidget(self.deck_list)
-        layout.addWidget(download_btn)
+        layout.addLayout(btn_layout)
         
         widget.setLayout(layout)
         widget.hide()
@@ -320,25 +259,17 @@ class MinimalNottorneyDialog(QDialog):
         self.show_log = not self.show_log
         self.log_widget.setVisible(self.show_log)
         self.log_btn.setText("Hide Log" if self.show_log else "Show Log")
-        
-        if self.show_log:
-            self.setMinimumHeight(600)
-        else:
-            self.setMinimumHeight(400)
+        self.setMinimumHeight(600 if self.show_log else 400)
     
     def run_startup_cleanup(self):
         """Run automatic cleanup on startup"""
         self.log("\n=== STARTUP CLEANUP ===")
-        
         try:
             cleaned, total = config.cleanup_deleted_decks()
-            
             if cleaned > 0:
                 self.log(f"✓ Cleaned up {cleaned} deleted deck(s)")
-                self.status_label.setText(f"Cleaned {cleaned} deleted deck(s) from tracking")
             else:
                 self.log(f"✓ All {total} tracked deck(s) are valid")
-                
         except Exception as e:
             self.log(f"✗ Cleanup error: {e}")
     
@@ -355,12 +286,10 @@ class MinimalNottorneyDialog(QDialog):
         
         try:
             cleaned, total = config.cleanup_deleted_decks()
-            
             if cleaned > 0:
                 QMessageBox.information(
                     self, "Cleanup Complete",
-                    f"Removed tracking for {cleaned} deleted deck(s).\n\n"
-                    f"Remaining: {total - cleaned} deck(s)"
+                    f"Removed tracking for {cleaned} deleted deck(s).\n\nRemaining: {total - cleaned} deck(s)"
                 )
             else:
                 QMessageBox.information(
@@ -368,15 +297,13 @@ class MinimalNottorneyDialog(QDialog):
                     f"All {total} tracked deck(s) exist in Anki."
                 )
             
-            # Reload status if logged in
             if config.is_logged_in():
                 self.load_deck_status()
-                
         except Exception as e:
             QMessageBox.warning(self, "Cleanup Error", f"Error during cleanup:\n\n{str(e)}")
     
     def check_notifications_silent(self):
-        """Silently check for notifications and update UI"""
+        """Silently check for notifications"""
         if not config.is_logged_in():
             return
         
@@ -388,16 +315,13 @@ class MinimalNottorneyDialog(QDialog):
                 unread_count = result.get('unread_count', 0)
                 config.set_unread_notification_count(unread_count)
                 config.update_last_notification_check()
-                
                 self.log(f"Found {unread_count} unread notification(s)")
                 
-                # Update notification button
                 if unread_count > 0:
                     self.notif_btn.setText(f"🔔 {unread_count}")
                     self.notif_btn.show()
                 else:
                     self.notif_btn.setText("🔔")
-                    # Still show button when logged in, even if no unread
                     self.notif_btn.show()
         except Exception as e:
             self.log(f"Notification check failed: {e}")
@@ -405,12 +329,84 @@ class MinimalNottorneyDialog(QDialog):
     def show_notifications(self):
         """Show notifications dialog"""
         from .notifications_dialog import NotificationsDialog
-        
         dialog = NotificationsDialog(mw)
         dialog.exec()
-        
-        # Refresh notification count after viewing
         self.check_notifications_silent()
+    
+    def show_deck_changelog(self, item):
+        """Show changelog for a deck (NEW!)"""
+        if not item:
+            return
+        
+        deck = item.data(Qt.ItemDataRole.UserRole)
+        deck_id = self.get_deck_id(deck)
+        deck_title = deck.get('title', 'Unknown')
+        
+        try:
+            self.log(f"Fetching changelog for {deck_title}...")
+            changelog = api.get_changelog(deck_id)
+            
+            if changelog.get('success'):
+                self.show_changelog_dialog(changelog)
+            else:
+                QMessageBox.warning(self, "Error", "Failed to fetch changelog")
+        except Exception as e:
+            self.log(f"Changelog error: {e}")
+            QMessageBox.warning(self, "Error", f"Failed to fetch changelog:\n\n{str(e)}")
+    
+    def show_changelog_dialog(self, changelog):
+        """Display changelog in a dialog"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Changelog: {changelog.get('title', 'Deck')}")
+        dialog.setMinimumSize(500, 400)
+        dialog.setStyleSheet(MINIMAL_STYLE)
+        
+        layout = QVBoxLayout()
+        
+        # Header info
+        current_ver = changelog.get('current_version', '')
+        synced_ver = changelog.get('user_synced_version', '')
+        is_updated = changelog.get('is_up_to_date', True)
+        
+        header = QLabel(f"<b>Current:</b> v{current_ver} | <b>Your version:</b> v{synced_ver or 'Not downloaded'}")
+        if not is_updated:
+            header.setText(header.text() + " | <span style='color: #ff5722;'><b>⟳ Update Available</b></span>")
+        layout.addWidget(header)
+        
+        # Version list
+        scroll = QScrollArea()
+        scroll_widget = QWidget()
+        scroll_layout = QVBoxLayout()
+        
+        for version in changelog.get('versions', []):
+            ver_num = version.get('version', '')
+            notes = version.get('version_notes', 'No notes')
+            card_count = version.get('card_count', 0)
+            is_current = version.get('is_current', False)
+            is_synced = version.get('is_synced', False)
+            
+            status = ""
+            if is_current:
+                status = " <b style='color: #4caf50;'>[LATEST]</b>"
+            if is_synced:
+                status += " <b style='color: #2196f3;'>[YOUR VERSION]</b>"
+            
+            ver_label = QLabel(f"<h3>v{ver_num}{status}</h3><p>{card_count} cards</p><p>{notes}</p><hr>")
+            ver_label.setWordWrap(True)
+            scroll_layout.addWidget(ver_label)
+        
+        scroll_widget.setLayout(scroll_layout)
+        scroll.setWidget(scroll_widget)
+        scroll.setWidgetResizable(True)
+        layout.addWidget(scroll)
+        
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.accept)
+        layout.addWidget(close_btn)
+        
+        dialog.setLayout(layout)
+        dialog.exec()
     
     def check_login(self):
         """Check login state"""
@@ -419,7 +415,6 @@ class MinimalNottorneyDialog(QDialog):
         
         if is_logged_in:
             self.show_sync_interface()
-            # Check notifications after showing interface
             self.check_notifications_silent()
         else:
             self.show_login_interface()
@@ -447,7 +442,6 @@ class MinimalNottorneyDialog(QDialog):
         self.login_widget.hide()
         self.sync_widget.show()
         self.advanced_btn.show()
-        
         self.load_deck_status()
     
     def handle_login(self):
@@ -470,13 +464,11 @@ class MinimalNottorneyDialog(QDialog):
             if result.get('success'):
                 self.log("Login successful")
                 self.show_sync_interface()
-                # Check notifications after login
                 self.check_notifications_silent()
             else:
                 error = result.get('error', 'Login failed')
                 self.log(f"Login failed: {error}")
                 self.status_label.setText(f"❌ {error}")
-        
         except NottorneyAPIError as e:
             error_msg = str(e)
             self.log(f"Login error: {error_msg}")
@@ -487,11 +479,9 @@ class MinimalNottorneyDialog(QDialog):
                 self.status_label.setText("❌ Incorrect email or password")
             else:
                 self.status_label.setText(f"❌ {error_msg}")
-        
         except Exception as e:
             self.log(f"Unexpected error: {e}")
             self.status_label.setText(f"❌ Error: {str(e)}")
-        
         finally:
             self.login_btn.setEnabled(True)
             self.login_btn.setText("Sign In")
@@ -499,8 +489,7 @@ class MinimalNottorneyDialog(QDialog):
     def handle_logout(self):
         """Handle logout"""
         reply = QMessageBox.question(
-            self, "Logout",
-            "Logout?",
+            self, "Logout", "Logout?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
         
@@ -517,8 +506,6 @@ class MinimalNottorneyDialog(QDialog):
             self.log("Fetching purchased decks...")
             
             self.decks = api.get_purchased_decks()
-            downloaded_decks = config.get_downloaded_decks()
-            
             total = len(self.decks)
             
             # Count new and updated decks
@@ -528,7 +515,6 @@ class MinimalNottorneyDialog(QDialog):
             for deck in self.decks:
                 deck_id = self.get_deck_id(deck)
                 
-                # Check if downloaded AND still exists
                 if not config.is_deck_downloaded(deck_id):
                     new += 1
                 else:
@@ -556,7 +542,6 @@ class MinimalNottorneyDialog(QDialog):
                 self.sync_status.setText(f"{status_text} available")
                 self.sync_btn.setText(f"Download ({new + updates})")
                 self.sync_btn.setEnabled(True)
-        
         except Exception as e:
             self.log(f"Error loading decks: {e}")
             self.status_label.setText("❌ Failed to load decks")
@@ -564,7 +549,7 @@ class MinimalNottorneyDialog(QDialog):
             self.sync_btn.setEnabled(False)
     
     def sync_all(self):
-        """Download all new/updated decks"""
+        """Download all new/updated decks using BATCH DOWNLOAD (NEW!)"""
         if self.is_syncing:
             return
         
@@ -596,42 +581,89 @@ class MinimalNottorneyDialog(QDialog):
         self.is_syncing = True
         self.sync_btn.setEnabled(False)
         self.progress.show()
-        self.progress.setMaximum(len(decks_to_sync))
         
+        # Use BATCH DOWNLOAD API (max 10 per request)
+        self.batch_download_decks(decks_to_sync)
+    
+    def batch_download_decks(self, decks):
+        """Download decks using batch API (NEW!)"""
         success_count = 0
         failed = []
         
-        for i, deck in enumerate(decks_to_sync):
-            deck_title = deck.get('title', 'Unknown')
-            deck_id = self.get_deck_id(deck)
-            version = self.get_deck_version(deck)
+        # Split into batches of 10
+        batch_size = 10
+        total_batches = (len(decks) + batch_size - 1) // batch_size
+        
+        self.progress.setMaximum(len(decks))
+        
+        for batch_idx in range(0, len(decks), batch_size):
+            batch = decks[batch_idx:batch_idx + batch_size]
+            batch_num = (batch_idx // batch_size) + 1
             
-            self.progress.setValue(i)
-            self.progress.setFormat(f"Downloading {i+1}/{len(decks_to_sync)}: {deck_title[:30]}...")
-            self.log(f"Downloading ({i+1}/{len(decks_to_sync)}): {deck_title}")
+            self.log(f"\n=== Batch {batch_num}/{total_batches} ({len(batch)} decks) ===")
+            
+            # Get deck IDs for this batch
+            deck_ids = [self.get_deck_id(d) for d in batch]
             
             try:
-                download_info = api.download_deck(deck_id)
-                deck_content = api.download_deck_file(download_info['download_url'])
-                anki_deck_id = import_deck(deck_content, deck_title)
-                config.save_downloaded_deck(deck_id, version, anki_deck_id)
+                # Call BATCH DOWNLOAD API
+                result = api.batch_download_decks(deck_ids)
                 
-                success_count += 1
-                self.log(f"✓ Success: {deck_title}")
-            
+                if result.get('success'):
+                    downloads = result.get('downloads', [])
+                    
+                    # Process successful downloads
+                    for i, download in enumerate(downloads):
+                        if download.get('success'):
+                            deck_id = download.get('deck_id')
+                            title = download.get('title', 'Unknown')
+                            version = download.get('version', '1.0')
+                            download_url = download.get('download_url')
+                            
+                            self.progress.setValue(batch_idx + i)
+                            self.progress.setFormat(f"Downloading: {title[:30]}...")
+                            self.log(f"Downloading: {title}")
+                            
+                            try:
+                                # Download and import
+                                deck_content = api.download_deck_file(download_url)
+                                anki_deck_id = import_deck(deck_content, title)
+                                config.save_downloaded_deck(deck_id, version, anki_deck_id)
+                                
+                                success_count += 1
+                                self.log(f"✓ {title}")
+                            except Exception as e:
+                                failed.append(f"{title}: {str(e)}")
+                                self.log(f"✗ {title}: {e}")
+                        else:
+                            # Failed in batch response
+                            title = download.get('title', 'Unknown')
+                            error = download.get('error', 'Unknown error')
+                            failed.append(f"{title}: {error}")
+                            self.log(f"✗ {title}: {error}")
+                    
+                    # Process failed decks from API
+                    for fail in result.get('failed', []):
+                        title = fail.get('title', 'Unknown')
+                        error = fail.get('error', 'Unknown error')
+                        failed.append(f"{title}: {error}")
+                        self.log(f"✗ {title}: {error}")
+                
             except Exception as e:
-                error_msg = str(e)
-                failed.append(f"{deck_title}: {error_msg}")
-                self.log(f"✗ Failed: {deck_title} - {error_msg}")
+                # Entire batch failed
+                self.log(f"✗ Batch {batch_num} failed: {e}")
+                for deck in batch:
+                    failed.append(f"{deck.get('title', 'Unknown')}: Batch request failed")
         
-        self.progress.setValue(len(decks_to_sync))
+        self.progress.setValue(len(decks))
         self.is_syncing = False
         self.progress.hide()
         
-        if success_count == len(decks_to_sync):
+        # Show results
+        if success_count == len(decks):
             QMessageBox.information(self, "Complete", f"✓ Downloaded all {success_count} deck(s)!")
         elif success_count > 0:
-            msg = f"Downloaded {success_count}/{len(decks_to_sync)} deck(s)\n\n"
+            msg = f"Downloaded {success_count}/{len(decks)} deck(s)\n\n"
             if failed:
                 msg += "Failed:\n" + "\n".join(failed[:3])
             QMessageBox.warning(self, "Partial Success", msg)
@@ -685,42 +717,12 @@ class MinimalNottorneyDialog(QDialog):
     def download_selected(self):
         """Download selected decks"""
         selected = self.deck_list.selectedItems()
-        
         if not selected:
             self.status_label.setText("Select decks to download")
             return
         
         decks_to_download = [item.data(Qt.ItemDataRole.UserRole) for item in selected]
-        self.download_decks(decks_to_download)
-    
-    def download_decks(self, decks):
-        """Download specific decks"""
-        self.progress.show()
-        self.progress.setMaximum(len(decks))
-        
-        success = 0
-        for i, deck in enumerate(decks):
-            deck_title = deck.get('title', 'Unknown')
-            deck_id = self.get_deck_id(deck)
-            version = self.get_deck_version(deck)
-            
-            self.progress.setValue(i)
-            self.log(f"Downloading: {deck_title}")
-            
-            try:
-                download_info = api.download_deck(deck_id)
-                deck_content = api.download_deck_file(download_info['download_url'])
-                anki_deck_id = import_deck(deck_content, deck_title)
-                config.save_downloaded_deck(deck_id, version, anki_deck_id)
-                success += 1
-                self.log(f"✓ {deck_title}")
-            except Exception as e:
-                self.log(f"✗ {deck_title}: {e}")
-        
-        self.progress.hide()
-        QMessageBox.information(self, "Complete", f"Downloaded {success}/{len(decks)} deck(s)")
-        self.populate_deck_list()
-        self.load_deck_status()
+        self.batch_download_decks(decks_to_download)
     
     def get_deck_id(self, deck):
         """Get deck ID"""
