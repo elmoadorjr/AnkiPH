@@ -1,6 +1,7 @@
 """
 Configuration management for the Nottorney addon
-FIXED: Better error handling and cache management
+ENHANCED: Added update checking, notification tracking, and sync state management
+Version: 1.1.0
 """
 
 from aqt import mw
@@ -61,9 +62,15 @@ class Config:
             "refresh_token": None,
             "expires_at": None,
             "user": None,
-            "ui_mode": "minimal",
+            "ui_mode": "tabbed",  # Changed default to "tabbed" for new UI
             "last_notification_check": None,
-            "unread_notification_count": 0
+            "unread_notification_count": 0,
+            "last_update_check": None,
+            "auto_check_updates": True,
+            "update_check_interval_hours": 24,
+            "available_updates": {},
+            "sync_state": {},
+            "protected_fields": {}
         }
     
     def _save_config(self, data):
@@ -166,7 +173,8 @@ class Config:
         cfg['downloaded_decks'][str(deck_id)] = {
             'version': str(version),
             'anki_deck_id': anki_deck_id,
-            'downloaded_at': datetime.now().isoformat()
+            'downloaded_at': datetime.now().isoformat(),
+            'last_synced': None
         }
         
         success = self._save_config(cfg)
@@ -227,6 +235,20 @@ class Config:
         deck_info = decks.get(str(deck_id), {})
         return deck_info.get('version')
     
+    def update_deck_version(self, deck_id, new_version):
+        """Update the version of a downloaded deck"""
+        if not deck_id:
+            return False
+        
+        cfg = self._get_config()
+        
+        if str(deck_id) in cfg.get('downloaded_decks', {}):
+            cfg['downloaded_decks'][str(deck_id)]['version'] = str(new_version)
+            cfg['downloaded_decks'][str(deck_id)]['updated_at'] = datetime.now().isoformat()
+            return self._save_config(cfg)
+        
+        return False
+    
     def remove_downloaded_deck(self, deck_id):
         """Remove a deck from tracking"""
         if not deck_id:
@@ -260,7 +282,162 @@ class Config:
         
         return success
     
-    # === SETTINGS ===
+    # === UPDATE CHECKING (NEW) ===
+    
+    def get_last_update_check(self):
+        """Get timestamp of last update check"""
+        return self._get_config().get('last_update_check')
+    
+    def set_last_update_check(self, timestamp=None):
+        """Save last update check timestamp"""
+        if timestamp is None:
+            timestamp = datetime.now().isoformat()
+        
+        cfg = self._get_config()
+        cfg['last_update_check'] = timestamp
+        return self._save_config(cfg)
+    
+    def get_auto_check_updates(self):
+        """Check if auto-update checking is enabled"""
+        return self._get_config().get('auto_check_updates', True)
+    
+    def set_auto_check_updates(self, enabled):
+        """Set auto-update checking state"""
+        cfg = self._get_config()
+        cfg['auto_check_updates'] = bool(enabled)
+        return self._save_config(cfg)
+    
+    def get_update_check_interval_hours(self):
+        """Get update check interval in hours"""
+        return self._get_config().get('update_check_interval_hours', 24)
+    
+    def set_update_check_interval_hours(self, hours):
+        """Set update check interval in hours"""
+        cfg = self._get_config()
+        cfg['update_check_interval_hours'] = int(hours)
+        return self._save_config(cfg)
+    
+    def get_available_updates(self):
+        """Get dict of decks with available updates"""
+        return self._get_config().get('available_updates', {})
+    
+    def save_available_updates(self, updates_dict):
+        """
+        Save available updates for decks
+        
+        Args:
+            updates_dict: Dict mapping deck_id -> update info
+        """
+        cfg = self._get_config()
+        cfg['available_updates'] = updates_dict
+        return self._save_config(cfg)
+    
+    def has_update_available(self, deck_id):
+        """Check if a specific deck has an update available"""
+        updates = self.get_available_updates()
+        return str(deck_id) in updates and updates[str(deck_id)].get('has_update', False)
+    
+    def clear_update_for_deck(self, deck_id):
+        """Clear update notification for a specific deck"""
+        cfg = self._get_config()
+        updates = cfg.get('available_updates', {})
+        
+        if str(deck_id) in updates:
+            del updates[str(deck_id)]
+            cfg['available_updates'] = updates
+            return self._save_config(cfg)
+        
+        return True
+    
+    # === NOTIFICATION TRACKING (NEW) ===
+    
+    def get_last_notification_check(self):
+        """Get timestamp of last notification check"""
+        return self._get_config().get('last_notification_check')
+    
+    def set_last_notification_check(self, timestamp=None):
+        """Save last notification check timestamp"""
+        if timestamp is None:
+            timestamp = datetime.now().isoformat()
+        
+        cfg = self._get_config()
+        cfg['last_notification_check'] = timestamp
+        return self._save_config(cfg)
+    
+    def get_unread_notification_count(self):
+        """Get count of unread notifications"""
+        return self._get_config().get('unread_notification_count', 0)
+    
+    def set_unread_notification_count(self, count):
+        """Set count of unread notifications"""
+        cfg = self._get_config()
+        cfg['unread_notification_count'] = int(count)
+        return self._save_config(cfg)
+    
+    # === SYNC STATE (NEW) ===
+    
+    def get_sync_state(self, deck_id):
+        """Get sync state for a deck"""
+        sync_states = self._get_config().get('sync_state', {})
+        return sync_states.get(str(deck_id), {})
+    
+    def save_sync_state(self, deck_id, state_data):
+        """
+        Save sync state for a deck
+        
+        Args:
+            deck_id: The deck ID
+            state_data: Dict containing sync state info
+        """
+        cfg = self._get_config()
+        
+        if 'sync_state' not in cfg:
+            cfg['sync_state'] = {}
+        
+        cfg['sync_state'][str(deck_id)] = {
+            **state_data,
+            'last_updated': datetime.now().isoformat()
+        }
+        
+        return self._save_config(cfg)
+    
+    def clear_sync_state(self, deck_id):
+        """Clear sync state for a deck"""
+        cfg = self._get_config()
+        sync_states = cfg.get('sync_state', {})
+        
+        if str(deck_id) in sync_states:
+            del sync_states[str(deck_id)]
+            cfg['sync_state'] = sync_states
+            return self._save_config(cfg)
+        
+        return True
+    
+    # === PROTECTED FIELDS (NEW) ===
+    
+    def get_protected_fields(self, deck_id):
+        """Get list of protected field names for a deck"""
+        protected = self._get_config().get('protected_fields', {})
+        return protected.get(str(deck_id), [])
+    
+    def save_protected_fields(self, deck_id, field_names):
+        """
+        Save list of protected field names for a deck
+        
+        Args:
+            deck_id: The deck ID
+            field_names: List of field names to protect
+        """
+        cfg = self._get_config()
+        
+        if 'protected_fields' not in cfg:
+            cfg['protected_fields'] = {}
+        
+        cfg['protected_fields'][str(deck_id)] = field_names
+        
+        return self._save_config(cfg)
+    
+    # === GENERAL SETTINGS ===
     
     def get_auto_sync_enabled(self):
         """Check if auto-sync is enabled"""
@@ -270,6 +447,19 @@ class Config:
         """Set auto-sync enabled state"""
         cfg = self._get_config()
         cfg['auto_sync_enabled'] = bool(enabled)
+        return self._save_config(cfg)
+    
+    def get_ui_mode(self):
+        """Get UI mode (minimal or tabbed)"""
+        return self._get_config().get('ui_mode', 'tabbed')
+    
+    def set_ui_mode(self, mode):
+        """Set UI mode"""
+        if mode not in ['minimal', 'tabbed']:
+            mode = 'tabbed'
+        
+        cfg = self._get_config()
+        cfg['ui_mode'] = mode
         return self._save_config(cfg)
 
 

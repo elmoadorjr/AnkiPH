@@ -1,12 +1,12 @@
 """
 Robust API client for Nottorney Add-on
-FIXED: Enhanced error handling, response validation, and browse_decks action parameter
-Version: 1.0.2
+ENHANCED: Added update checking, notifications, and AnkiHub-parity endpoints
+Version: 1.1.0
 """
 
 from __future__ import annotations
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 API_BASE = "https://ladvckxztcleljbiomcf.supabase.co/functions/v1"
 
@@ -179,7 +179,6 @@ class ApiClient:
         Returns:
             API response with decks list
         """
-        # FIXED: Always include action parameter for backend compatibility
         json_body = {"action": "list"}
         
         if subject:
@@ -193,8 +192,19 @@ class ApiClient:
         """Get download URL for a deck"""
         return self.post("/addon-download-deck", json_body={"deck_id": deck_id})
 
-    def batch_download_decks(self, deck_ids: list[str]) -> Any:
-        """Download multiple decks"""
+    def batch_download_decks(self, deck_ids: List[str]) -> Any:
+        """
+        Download multiple decks at once (max 10 per API docs)
+        
+        Args:
+            deck_ids: List of deck IDs to download (max 10)
+        
+        Returns:
+            API response with download URLs for each deck
+        """
+        if len(deck_ids) > 10:
+            raise ValueError("Maximum 10 decks per batch download")
+        
         return self.post("/addon-batch-download", json_body={"deck_ids": deck_ids})
 
     def download_deck_file(self, download_url: str) -> bytes:
@@ -256,7 +266,6 @@ class ApiClient:
             if len(content) >= 4:
                 if content[:2] != b"PK":
                     print("⚠ Warning: downloaded file does not appear to be a ZIP file")
-                    # Don't raise error - some .apkg files might have unusual headers
 
             return bytes(content)
             
@@ -272,22 +281,308 @@ class ApiClient:
         except Exception as e:
             raise NottorneyAPIError(f"Unexpected error downloading deck: {e}") from e
 
-    # === PROGRESS & SYNC ENDPOINTS ===
+    # === UPDATE CHECKING (NEW) ===
     
-    def sync_progress(self, progress_data: list = None) -> Any:
-        """Sync study progress to server"""
-        return self.post("/addon-sync-progress", json_body={"progress_data": progress_data or []})
+    def check_updates(self) -> Any:
+        """
+        Check for updates on all purchased decks
+        
+        Returns:
+            {
+                "success": true,
+                "decks": [
+                    {
+                        "deck_id": "abc123",
+                        "current_version": "1.0.0",
+                        "latest_version": "1.2.0",
+                        "has_update": true,
+                        "update_type": "minor",
+                        "changelog_summary": "Added 50 new cards"
+                    }
+                ]
+            }
+        """
+        return self.post("/addon-check-updates")
 
     def get_changelog(self, deck_id: str) -> Any:
-        """Get changelog for a deck"""
+        """
+        Get full changelog/version history for a deck
+        
+        Args:
+            deck_id: The deck ID
+        
+        Returns:
+            {
+                "success": true,
+                "versions": [
+                    {
+                        "version": "1.2.0",
+                        "released_at": "2024-12-10T10:00:00Z",
+                        "changes": ["Added 50 new cards", "Fixed typos"]
+                    }
+                ]
+            }
+        """
         return self.post("/addon-get-changelog", json_body={"deck_id": deck_id})
 
+    # === NOTIFICATIONS (NEW) ===
+    
     def check_notifications(self, mark_as_read: bool = False, limit: int = 10) -> Any:
-        """Check for notifications"""
+        """
+        Check for user notifications
+        
+        Args:
+            mark_as_read: Whether to mark notifications as read
+            limit: Maximum number of notifications to return
+        
+        Returns:
+            {
+                "success": true,
+                "notifications": [
+                    {
+                        "id": "notif123",
+                        "type": "deck_update",
+                        "title": "Update Available",
+                        "message": "Criminal Law v1.5.0 is now available",
+                        "created_at": "2024-12-15T08:00:00Z",
+                        "read": false
+                    }
+                ],
+                "unread_count": 3
+            }
+        """
         return self.post(
             "/addon-check-notifications", 
             json_body={"mark_as_read": mark_as_read, "limit": limit}
         )
+
+    # === PROGRESS & SYNC ENDPOINTS ===
+    
+    def sync_progress(self, progress_data: List[Dict] = None) -> Any:
+        """Sync study progress to server"""
+        return self.post("/addon-sync-progress", json_body={"progress_data": progress_data or []})
+
+    # === ANKIHUB-PARITY: COLLABORATIVE FEATURES (NEW) ===
+    
+    def push_changes(self, deck_id: str, changes: List[Dict], version: str) -> Any:
+        """
+        Push local card edits to server
+        
+        Args:
+            deck_id: The deck ID
+            changes: List of card changes
+            version: Current deck version
+        
+        Returns:
+            {"success": true, "changes_accepted": 5}
+        """
+        return self.post("/addon-push-changes", 
+                        json_body={"deck_id": deck_id, "changes": changes, "version": version})
+
+    def pull_changes(self, deck_id: str, since: Optional[str] = None, 
+                     last_change_id: Optional[str] = None) -> Any:
+        """
+        Pull publisher changes since last sync
+        
+        Args:
+            deck_id: The deck ID
+            since: ISO 8601 timestamp to pull changes after
+            last_change_id: ID of last synced change
+        
+        Returns:
+            {
+                "success": true,
+                "changes": [...],
+                "conflicts": [...]
+            }
+        """
+        body = {"deck_id": deck_id}
+        if since:
+            body["since"] = since
+        if last_change_id:
+            body["last_change_id"] = last_change_id
+        
+        return self.post("/addon-pull-changes", json_body=body)
+
+    def submit_suggestion(self, deck_id: str, card_guid: str, field_name: str,
+                         current_value: str, suggested_value: str, 
+                         reason: Optional[str] = None) -> Any:
+        """
+        Submit a card improvement suggestion
+        
+        Args:
+            deck_id: The deck ID
+            card_guid: The card's GUID
+            field_name: Name of the field to change
+            current_value: Current field value
+            suggested_value: Suggested new value
+            reason: Optional reason for suggestion
+        
+        Returns:
+            {"success": true, "suggestion_id": "sugg123"}
+        """
+        return self.post("/addon-submit-suggestion", json_body={
+            "deck_id": deck_id,
+            "card_guid": card_guid,
+            "field_name": field_name,
+            "current_value": current_value,
+            "suggested_value": suggested_value,
+            "reason": reason
+        })
+
+    def get_protected_fields(self, deck_id: Optional[str] = None) -> Any:
+        """
+        Get fields protected from sync overwrites
+        
+        Args:
+            deck_id: Optional deck ID to get specific deck's protected fields
+        
+        Returns:
+            {
+                "success": true,
+                "protected_fields": ["Personal Notes", "My Tags"]
+            }
+        """
+        body = {"deck_id": deck_id} if deck_id else {}
+        return self.post("/addon-get-protected-fields", json_body=body)
+
+    def set_protected_fields(self, deck_id: str, field_names: List[str]) -> Any:
+        """
+        Set which fields should be protected from sync overwrites
+        
+        Args:
+            deck_id: The deck ID
+            field_names: List of field names to protect
+        
+        Returns:
+            {"success": true}
+        """
+        return self.post("/addon-get-protected-fields", 
+                        json_body={"deck_id": deck_id, "field_names": field_names})
+
+    def get_card_history(self, deck_id: str, card_guid: str, limit: int = 50) -> Any:
+        """
+        Get change history for a specific card
+        
+        Args:
+            deck_id: The deck ID
+            card_guid: The card's GUID
+            limit: Maximum number of history entries
+        
+        Returns:
+            {
+                "success": true,
+                "history": [
+                    {
+                        "version": "1.2.0",
+                        "changed_at": "2024-12-10T10:00:00Z",
+                        "changed_by": "publisher",
+                        "changes": {"Front": "Old value"}
+                    }
+                ]
+            }
+        """
+        return self.post("/addon-get-card-history", 
+                        json_body={"deck_id": deck_id, "card_guid": card_guid, "limit": limit})
+
+    def rollback_card(self, deck_id: str, card_guid: str, target_version: str) -> Any:
+        """
+        Rollback a card to a previous version
+        
+        Args:
+            deck_id: The deck ID
+            card_guid: The card's GUID
+            target_version: Version to rollback to
+        
+        Returns:
+            {"success": true}
+        """
+        return self.post("/addon-rollback-card", 
+                        json_body={
+                            "deck_id": deck_id,
+                            "card_guid": card_guid,
+                            "target_version": target_version
+                        })
+
+    # === DATA SYNC (NEW) ===
+    
+    def sync_tags(self, deck_id: str, action: str, changes: Optional[List] = None, 
+                  since: Optional[str] = None) -> Any:
+        """
+        Sync tags bidirectionally
+        
+        Args:
+            deck_id: The deck ID
+            action: 'push' or 'pull'
+            changes: List of tag changes (for push)
+            since: Timestamp to pull changes after (for pull)
+        
+        Returns:
+            {"success": true, "tags_synced": 10}
+        """
+        body = {"deck_id": deck_id, "action": action}
+        if changes:
+            body["changes"] = changes
+        if since:
+            body["since"] = since
+        
+        return self.post("/addon-sync-tags", json_body=body)
+
+    def sync_suspend_state(self, deck_id: str, action: str, changes: Optional[List] = None,
+                           since: Optional[str] = None) -> Any:
+        """
+        Sync card suspend/buried state
+        
+        Args:
+            deck_id: The deck ID
+            action: 'push' or 'pull'
+            changes: List of suspend state changes (for push)
+            since: Timestamp to pull changes after (for pull)
+        
+        Returns:
+            {"success": true, "states_synced": 5}
+        """
+        body = {"deck_id": deck_id, "action": action}
+        if changes:
+            body["changes"] = changes
+        if since:
+            body["since"] = since
+        
+        return self.post("/addon-sync-suspend-state", json_body=body)
+
+    def sync_media(self, deck_id: str, action: str, **kwargs) -> Any:
+        """
+        Sync media files
+        
+        Args:
+            deck_id: The deck ID
+            action: 'list', 'get_upload_url', or 'confirm_upload'
+            **kwargs: Additional action-specific parameters
+        
+        Returns:
+            Varies by action
+        """
+        body = {"deck_id": deck_id, "action": action, **kwargs}
+        return self.post("/addon-sync-media", json_body=body)
+
+    def sync_note_types(self, deck_id: str, action: str = "get", 
+                        note_types: Optional[List] = None) -> Any:
+        """
+        Sync note type templates and CSS
+        
+        Args:
+            deck_id: The deck ID
+            action: 'get' or 'push'
+            note_types: List of note types to push
+        
+        Returns:
+            {"success": true, "note_types": [...]}
+        """
+        body = {"deck_id": deck_id, "action": action}
+        if note_types:
+            body["note_types"] = note_types
+        
+        return self.post("/addon-sync-note-types", json_body=body)
 
 
 # === GLOBAL INSTANCE ===
