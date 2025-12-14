@@ -1,7 +1,7 @@
 """
 Minimal Dialog for Nottorney Addon
 FIXED: Complete PyQt6 compatibility + proper response handling + field name fixes
-Version: 1.0.2
+Version: 1.0.3 - FIXED: Download not closing dialog, better error handling
 """
 
 from aqt.qt import (
@@ -39,7 +39,6 @@ class MinimalNottorneyDialog(QDialog):
         # Title
         title = QLabel("⚖️ Nottorney Deck Manager")
         title.setStyleSheet("font-size: 18px; font-weight: bold; padding: 10px;")
-        # FIXED: PyQt6 requires Qt.AlignmentFlag.AlignCenter
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
         
@@ -70,7 +69,6 @@ class MinimalNottorneyDialog(QDialog):
         password_label.setStyleSheet("font-weight: bold;")
         self.password_input = QLineEdit()
         self.password_input.setPlaceholderText("Enter your password")
-        # FIXED: PyQt6 requires QLineEdit.EchoMode.Password (not just .Password)
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
         
         # Allow Enter key to submit
@@ -146,10 +144,10 @@ class MinimalNottorneyDialog(QDialog):
         logout_btn.clicked.connect(self.logout)
         button_layout.addWidget(logout_btn)
         
-        close_btn = QPushButton("Close")
-        close_btn.setStyleSheet("padding: 8px;")
-        close_btn.clicked.connect(self.accept)
-        button_layout.addWidget(close_btn)
+        self.close_btn = QPushButton("Close")
+        self.close_btn.setStyleSheet("padding: 8px;")
+        self.close_btn.clicked.connect(self.accept)
+        button_layout.addWidget(self.close_btn)
         
         layout.addLayout(button_layout)
         
@@ -162,7 +160,6 @@ class MinimalNottorneyDialog(QDialog):
         password = self.password_input.text().strip()
         
         if not email or not password:
-            # FIXED: PyQt6 requires QMessageBox.Icon.Warning
             QMessageBox.warning(self, "Missing Information", 
                               "Please enter both email and password.")
             return
@@ -344,6 +341,9 @@ class MinimalNottorneyDialog(QDialog):
         
         set_access_token(token)
         
+        # FIXED: Disable close button during download
+        self.close_btn.setEnabled(False)
+        
         try:
             self.status_label.setText(f"⏳ Downloading {deck_name}...")
             
@@ -389,6 +389,9 @@ class MinimalNottorneyDialog(QDialog):
                         f"'{deck_name}' was imported but couldn't be tracked.\n\n"
                         f"You may need to download it again later for updates."
                     )
+                
+                # FIXED: Re-enable close button
+                self.close_btn.setEnabled(True)
             
             def on_import_failure(error_msg):
                 self.status_label.setText(f"❌ Import failed")
@@ -396,6 +399,9 @@ class MinimalNottorneyDialog(QDialog):
                     self, "Import Failed",
                     f"Failed to import '{deck_name}':\n\n{error_msg}"
                 )
+                
+                # FIXED: Re-enable close button
+                self.close_btn.setEnabled(True)
             
             # Import with progress tracking
             import_deck_with_progress(
@@ -415,6 +421,9 @@ class MinimalNottorneyDialog(QDialog):
             
             self.status_label.setText(f"❌ Download failed")
             QMessageBox.critical(self, "Download Error", error_msg)
+            
+            # FIXED: Re-enable close button
+            self.close_btn.setEnabled(True)
         
         except Exception as e:
             self.status_label.setText(f"❌ Download failed")
@@ -422,3 +431,6 @@ class MinimalNottorneyDialog(QDialog):
                 self, "Error",
                 f"Failed to download '{deck_name}':\n\n{str(e)}"
             )
+            
+            # FIXED: Re-enable close button
+            self.close_btn.setEnabled(True)

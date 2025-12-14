@@ -1,7 +1,7 @@
 """
 Modern Tabbed Dialog for Nottorney Addon
 Features: My Decks, Browse, Updates, Notifications tabs
-Version: 1.1.0
+Version: 1.1.1 - FIXED: Download not closing dialog, better error handling
 """
 
 from aqt.qt import (
@@ -362,6 +362,12 @@ class NottorneyTabbedDialog(QDialog):
         self.my_decks_list.clear()
         
         try:
+            # FIXED: Clean up deleted decks before displaying
+            from sync import clean_deleted_decks
+            cleaned = clean_deleted_decks()
+            if cleaned > 0:
+                print(f"✓ Cleaned up {cleaned} deleted deck(s)")
+            
             downloaded_decks = config.get_downloaded_decks()
             
             if not downloaded_decks:
@@ -589,6 +595,12 @@ class NottorneyTabbedDialog(QDialog):
         
         set_access_token(token)
         
+        # FIXED: Disable close button during download
+        close_buttons = self.findChildren(QPushButton)
+        for btn in close_buttons:
+            if btn.text() == "Close":
+                btn.setEnabled(False)
+        
         try:
             self.browse_status.setText(f"⏳ Downloading {deck_name}...")
             
@@ -627,11 +639,21 @@ class NottorneyTabbedDialog(QDialog):
                     self.load_updates()
                 else:
                     self.browse_status.setText(f"⚠️ Import succeeded but tracking failed")
+                
+                # FIXED: Re-enable close button after import
+                for btn in close_buttons:
+                    if btn.text() == "Close":
+                        btn.setEnabled(True)
             
             def on_failure(error_msg):
                 self.browse_status.setText(f"❌ Import failed")
                 QMessageBox.critical(self, "Import Failed", 
                                    f"Failed to import '{deck_name}':\n\n{error_msg}")
+                
+                # FIXED: Re-enable close button after failure
+                for btn in close_buttons:
+                    if btn.text() == "Close":
+                        btn.setEnabled(True)
             
             import_deck_with_progress(deck_content, deck_name, 
                                     on_success=on_success, on_failure=on_failure)
@@ -646,7 +668,17 @@ class NottorneyTabbedDialog(QDialog):
             
             self.browse_status.setText(f"❌ Download failed")
             QMessageBox.critical(self, "Download Error", error_msg)
+            
+            # FIXED: Re-enable close button on error
+            for btn in close_buttons:
+                if btn.text() == "Close":
+                    btn.setEnabled(True)
         
         except Exception as e:
             self.browse_status.setText(f"❌ Download failed")
             QMessageBox.critical(self, "Error", f"Failed to download '{deck_name}':\n\n{str(e)}")
+            
+            # FIXED: Re-enable close button on error
+            for btn in close_buttons:
+                if btn.text() == "Close":
+                    btn.setEnabled(True)
