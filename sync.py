@@ -100,33 +100,24 @@ def get_progress_data() -> list:
 
 
 def calculate_retention_rate(deck_id: int) -> float:
-    """
-    Calculate retention rate for a deck based on review performance
-    
-    Retention rate = (Correct reviews / Total reviews) * 100
-    Only considers reviews from the last 30 days
-    """
+    """Calculate retention rate for a deck based on review performance"""
     try:
         if not mw.col or not deck_exists(deck_id):
             return 0.0
         
-        # Calculate the timestamp for 30 days ago
         cutoff_time = int((datetime.now() - timedelta(days=30)).timestamp() * 1000)
         
-        # Get card IDs for the deck
         card_ids = mw.col.decks.cids(deck_id, children=True)
         
         if not card_ids:
             return 0.0
         
-        # FIXED: Validate card_ids before building query
         valid_card_ids = [int(cid) for cid in card_ids if cid]
         if not valid_card_ids:
             return 0.0
         
         card_ids_str = ",".join(str(cid) for cid in valid_card_ids)
         
-        # FIXED: Added error handling for SQL query
         query = f"""
             SELECT 
                 COUNT(*) as total_reviews,
@@ -154,30 +145,22 @@ def calculate_retention_rate(deck_id: int) -> float:
 
 
 def calculate_current_streak(deck_id: int) -> int:
-    """
-    Calculate the current study streak for a deck
-    
-    A streak is maintained if the user studied at least once per day.
-    The streak breaks if there's a day with no reviews.
-    """
+    """Calculate the current study streak for a deck"""
     try:
         if not mw.col or not deck_exists(deck_id):
             return 0
         
-        # Get card IDs for the deck
         card_ids = mw.col.decks.cids(deck_id, children=True)
         
         if not card_ids:
             return 0
         
-        # FIXED: Validate card_ids
         valid_card_ids = [int(cid) for cid in card_ids if cid]
         if not valid_card_ids:
             return 0
         
         card_ids_str = ",".join(str(cid) for cid in valid_card_ids)
         
-        # FIXED: Added error handling and better date parsing
         query = f"""
             SELECT DISTINCT DATE(id / 1000, 'unixepoch', 'localtime') as review_date
             FROM revlog
@@ -190,7 +173,6 @@ def calculate_current_streak(deck_id: int) -> int:
         if not review_dates:
             return 0
         
-        # FIXED: Better date parsing with error handling
         parsed_dates = []
         for date_str in review_dates:
             try:
@@ -203,15 +185,12 @@ def calculate_current_streak(deck_id: int) -> int:
         if not parsed_dates:
             return 0
         
-        # Check if user studied today or yesterday to count as active streak
         today = datetime.now().date()
         yesterday = today - timedelta(days=1)
         
         if parsed_dates[0] != today and parsed_dates[0] != yesterday:
-            # Streak is broken if last review was before yesterday
             return 0
         
-        # Count consecutive days
         streak_days = 0
         expected_date = today
         
@@ -220,7 +199,6 @@ def calculate_current_streak(deck_id: int) -> int:
                 streak_days += 1
                 expected_date = review_date - timedelta(days=1)
             else:
-                # Gap found, streak ends
                 break
         
         return streak_days
@@ -231,30 +209,24 @@ def calculate_current_streak(deck_id: int) -> int:
 
 
 def get_review_stats_for_deck(deck_id: int, days: int = 30) -> dict:
-    """
-    Get review statistics for a deck from the review history
-    """
+    """Get review statistics for a deck from the review history"""
     try:
         if not mw.col or not deck_exists(deck_id):
             return {}
         
-        # Calculate the timestamp for X days ago
         cutoff_time = int((datetime.now() - timedelta(days=days)).timestamp() * 1000)
         
-        # Get card IDs for the deck
         card_ids = mw.col.decks.cids(deck_id, children=True)
         
         if not card_ids:
             return {}
         
-        # FIXED: Validate card_ids
         valid_card_ids = [int(cid) for cid in card_ids if cid]
         if not valid_card_ids:
             return {}
         
         card_ids_str = ",".join(str(cid) for cid in valid_card_ids)
         
-        # FIXED: Added error handling for SQL query
         query = f"""
             SELECT 
                 COUNT(*) as total_reviews,
@@ -272,9 +244,8 @@ def get_review_stats_for_deck(deck_id: int, days: int = 30) -> dict:
         if not result:
             return {}
         
-        # Get last study date from the last review ID
         last_study_date = None
-        if result[4]:  # last_review_id
+        if result[4]:
             try:
                 last_study_date = datetime.fromtimestamp(result[4] / 1000).isoformat()
             except (ValueError, OSError) as e:
@@ -293,10 +264,7 @@ def get_review_stats_for_deck(deck_id: int, days: int = 30) -> dict:
 
 
 def clean_deleted_decks():
-    """
-    Remove tracking for decks that no longer exist in Anki
-    Returns the number of decks cleaned up
-    """
+    """Remove tracking for decks that no longer exist in Anki"""
     downloaded_decks = config.get_downloaded_decks()
     decks_to_remove = []
     
@@ -311,7 +279,6 @@ def clean_deleted_decks():
             decks_to_remove.append(deck_id)
             print(f"Deck {deck_id} (Anki ID: {anki_deck_id}) marked for cleanup")
     
-    # Remove the deleted decks from tracking
     for deck_id in decks_to_remove:
         config.remove_downloaded_deck(deck_id)
         print(f"Removed deck {deck_id} from tracking")
@@ -320,10 +287,7 @@ def clean_deleted_decks():
 
 
 def sync_progress():
-    """
-    Sync progress for all downloaded decks to the server
-    """
-    # FIXED: Check if collection is available
+    """Sync progress for all downloaded decks to the server"""
     if not mw.col:
         raise Exception("Anki collection not available. Please try again.")
     
@@ -331,20 +295,16 @@ def sync_progress():
         raise Exception("Not logged in")
     
     try:
-        # First, clean up any deleted decks
         cleaned = clean_deleted_decks()
         if cleaned > 0:
             print(f"Cleaned up {cleaned} deleted deck(s) from tracking")
         
-        # Get progress data
         progress_data = get_progress_data()
         
         if not progress_data:
-            # No decks to sync
             print("No decks to sync")
             return None
         
-        # Send to server
         print(f"Syncing progress for {len(progress_data)} deck(s)")
         result = api.sync_progress(progress_data)
         
@@ -356,16 +316,12 @@ def sync_progress():
 
 
 def should_auto_sync() -> bool:
-    """
-    Check if we should automatically sync progress
-    """
+    """Check if we should automatically sync progress"""
     return True
 
 
 def auto_sync_if_needed():
-    """
-    Automatically sync progress if needed
-    """
+    """Automatically sync progress if needed"""
     if not config.is_logged_in():
         return
     
@@ -378,5 +334,4 @@ def auto_sync_if_needed():
     try:
         sync_progress()
     except Exception as e:
-        # Silently fail for auto-sync
         print(f"Auto-sync failed: {e}")

@@ -1,5 +1,6 @@
 """
 Nottorney Anki Addon - Minimal Version
+FIXED: PyQt6 compatibility
 """
 
 from aqt import mw, gui_hooks
@@ -7,9 +8,9 @@ from aqt.qt import QAction
 from aqt.utils import showInfo
 
 try:
-    from . ui. single_dialog import MinimalNottorneyDialog
+    from .ui.single_dialog import MinimalNottorneyDialog
     from .config import config
-    from .  import sync
+    from . import sync
     from .api_client import api
 except ImportError as e:
     def show_error():
@@ -34,7 +35,7 @@ def show_main_dialog():
 
 def setup_menu():
     """Setup menu"""
-    menu = mw.form.menuTools. addMenu("Nottorney")
+    menu = mw.form.menuTools.addMenu("Nottorney")
     
     action = QAction("Open", mw)
     action.triggered.connect(show_main_dialog)

@@ -1,7 +1,7 @@
 """
 Deck importer for the Nottorney addon - FIXED VERSION
 Handles importing .apkg files into Anki without creating duplicate decks
-FIXED: Properly handles DeckNameId objects from Anki API
+FIXED: Properly handles DeckNameId objects from Anki API and PyQt6 compatibility
 """
 
 import tempfile

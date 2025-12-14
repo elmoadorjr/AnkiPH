@@ -1,5 +1,6 @@
 """
 Minimal Dialog for Nottorney Addon
+FIXED: Complete PyQt6 compatibility
 """
 
 from aqt.qt import (
@@ -48,7 +49,8 @@ class MinimalNottorneyDialog(QDialog):
             password_label = QLabel("Password:")
             self.password_input = QLineEdit()
             self.password_input.setPlaceholderText("Enter password")
-            self.password_input.setEchoMode(QLineEdit.Password)
+            # FIXED: PyQt6 requires QLineEdit.EchoMode.Password
+            self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
             
             layout.addWidget(email_label)
             layout.addWidget(self.email_input)
@@ -107,7 +109,7 @@ class MinimalNottorneyDialog(QDialog):
                     QMessageBox.information(self, "Success", "Login successful!")
                     self.accept()
             else:
-                QMessageBox. warning(self, "Error", result.get('message', 'Login failed'))
+                QMessageBox.warning(self, "Error", result.get('message', 'Login failed'))
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Login error: {str(e)}")
     
@@ -123,9 +125,10 @@ class MinimalNottorneyDialog(QDialog):
             if result.get('success'):
                 decks = result.get('decks', [])
                 for deck in decks:
-                    item = QListWidgetItem(deck. get('name', 'Unknown'))
-                    item.setData(Qt.UserRole, deck.get('id'))
-                    self. deck_list.addItem(item)
+                    item = QListWidgetItem(deck.get('name', 'Unknown'))
+                    # FIXED: PyQt6 requires Qt.ItemDataRole.UserRole
+                    item.setData(Qt.ItemDataRole.UserRole, deck.get('id'))
+                    self.deck_list.addItem(item)
         except Exception as e: 
             QMessageBox.warning(self, "Error", f"Failed to load decks: {str(e)}")
     
@@ -134,16 +137,17 @@ class MinimalNottorneyDialog(QDialog):
         query = self.search_input.text().lower()
         for i in range(self.deck_list.count()):
             item = self.deck_list.item(i)
-            item.setHidden(query not in item. text().lower())
+            item.setHidden(query not in item.text().lower())
     
     def download_deck(self):
         """Download selected deck"""
-        current = self.deck_list. currentItem()
+        current = self.deck_list.currentItem()
         if not current:
-            QMessageBox. warning(self, "Warning", "Select a deck")
+            QMessageBox.warning(self, "Warning", "Select a deck")
             return
         
-        deck_id = current.data(Qt.UserRole)
+        # FIXED: PyQt6 requires Qt.ItemDataRole.UserRole
+        deck_id = current.data(Qt.ItemDataRole.UserRole)
         
         # Set access token before API call
         token = config.get_access_token()
