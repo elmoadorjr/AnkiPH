@@ -1,6 +1,7 @@
 """
 Configuration management for the Nottorney addon
 ENHANCED: Added update checking, notification tracking, and sync state management
+FIXED: Added v1.1.0 migration for existing users
 Version: 1.1.0
 """
 
@@ -41,6 +42,22 @@ class Config:
                 if key not in config:
                     config[key] = value
             
+            # === v1.1.0 MIGRATION ===
+            # Force tabbed UI for existing users (one-time migration)
+            migration_needed = False
+            if 'ui_mode' in config:
+                if config.get('ui_mode') == 'minimal':
+                    if not config.get('migrated_to_v1_1_0', False):
+                        print("⚡ Migrating to v1.1.0: Switching to tabbed UI")
+                        config['ui_mode'] = 'tabbed'
+                        config['migrated_to_v1_1_0'] = True
+                        migration_needed = True
+            
+            # Save if migration happened
+            if migration_needed:
+                self._save_config(config)
+            # === END MIGRATION ===
+            
             # Update cache
             self._config_cache = config
             self._cache_timestamp = current_time
@@ -70,7 +87,8 @@ class Config:
             "update_check_interval_hours": 24,
             "available_updates": {},
             "sync_state": {},
-            "protected_fields": {}
+            "protected_fields": {},
+            "migrated_to_v1_1_0": False  # NEW: Track migration status
         }
     
     def _save_config(self, data):
