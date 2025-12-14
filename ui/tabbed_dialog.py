@@ -1,7 +1,7 @@
 """
 Modern Tabbed Dialog for Nottorney Addon
 Features: My Decks, Browse, Updates, Notifications tabs
-Version: 1.1.1 - FIXED: Download not closing dialog, better error handling
+Version: 1.1.2 - FIXED: Import errors
 """
 
 from aqt.qt import (
@@ -16,10 +16,11 @@ import os
 # Get parent directory to import from root
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from api_client import api, set_access_token, NottorneyAPIError
-from config import config
-from deck_importer import import_deck_with_progress
-from update_checker import update_checker
+# FIXED: Use relative imports for all addon modules
+from ..api_client import api, set_access_token, NottorneyAPIError
+from ..config import config
+from ..deck_importer import import_deck_with_progress
+from ..update_checker import update_checker
 
 
 class NottorneyTabbedDialog(QDialog):
@@ -363,7 +364,7 @@ class NottorneyTabbedDialog(QDialog):
         
         try:
             # FIXED: Clean up deleted decks before displaying
-            from sync import clean_deleted_decks
+            from ..sync import clean_deleted_decks
             cleaned = clean_deleted_decks()
             if cleaned > 0:
                 print(f"✓ Cleaned up {cleaned} deleted deck(s)")
@@ -405,7 +406,7 @@ class NottorneyTabbedDialog(QDialog):
     def sync_progress(self):
         """Sync progress to server"""
         try:
-            from sync import sync_progress
+            from ..sync import sync_progress
             
             self.my_decks_status.setText("⏳ Syncing progress...")
             sync_progress()
