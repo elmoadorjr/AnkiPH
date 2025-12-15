@@ -238,6 +238,16 @@ class NottorneyTabbedDialog(QDialog):
         sync_changes_btn.clicked.connect(self.open_sync_dialog)
         btn_layout.addWidget(sync_changes_btn)
         
+        history_btn = QPushButton("📜 Card History")
+        history_btn.setToolTip("View card change history and rollback")
+        history_btn.clicked.connect(self.open_history_browser)
+        btn_layout.addWidget(history_btn)
+        
+        suggest_btn = QPushButton("💡 Suggest")
+        suggest_btn.setToolTip("Suggest card improvement to maintainer")
+        suggest_btn.clicked.connect(self.open_suggestion_browser)
+        btn_layout.addWidget(suggest_btn)
+        
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
         
@@ -552,6 +562,92 @@ class NottorneyTabbedDialog(QDialog):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to open sync dialog:\n{str(e)}")
             print(f"Sync dialog error: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def open_history_browser(self):
+        """Open card history browser for selected deck"""
+        current = self.my_decks_list.currentItem()
+        if not current:
+            QMessageBox.warning(
+                self, "No Selection",
+                "Please select a deck from 'My Decks' to view card history."
+            )
+            return
+        
+        data = current.data(Qt.ItemDataRole.UserRole)
+        if not data or not isinstance(data, dict):
+            QMessageBox.warning(self, "Error", "Could not get deck information.")
+            return
+        
+        deck_id = data.get('deck_id')
+        if not deck_id:
+            QMessageBox.warning(self, "Error", "Could not determine deck ID.")
+            return
+        
+        # Get deck name from Anki if possible
+        deck_info = data.get('deck_info', {})
+        anki_deck_id = deck_info.get('anki_deck_id')
+        deck_name = f"Deck {deck_id[:8]}"
+        
+        if anki_deck_id and mw.col:
+            try:
+                deck = mw.col.decks.get(int(anki_deck_id))
+                if deck:
+                    deck_name = deck['name']
+            except:
+                pass
+        
+        try:
+            from .history_dialog import DeckHistoryBrowser
+            dialog = DeckHistoryBrowser(deck_id, deck_name, self)
+            dialog.exec()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to open history browser:\n{str(e)}")
+            print(f"History browser error: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def open_suggestion_browser(self):
+        """Open suggestion browser for selected deck"""
+        current = self.my_decks_list.currentItem()
+        if not current:
+            QMessageBox.warning(
+                self, "No Selection",
+                "Please select a deck from 'My Decks' to suggest improvements."
+            )
+            return
+        
+        data = current.data(Qt.ItemDataRole.UserRole)
+        if not data or not isinstance(data, dict):
+            QMessageBox.warning(self, "Error", "Could not get deck information.")
+            return
+        
+        deck_id = data.get('deck_id')
+        if not deck_id:
+            QMessageBox.warning(self, "Error", "Could not determine deck ID.")
+            return
+        
+        # Get deck name from Anki if possible
+        deck_info = data.get('deck_info', {})
+        anki_deck_id = deck_info.get('anki_deck_id')
+        deck_name = f"Deck {deck_id[:8]}"
+        
+        if anki_deck_id and mw.col:
+            try:
+                deck = mw.col.decks.get(int(anki_deck_id))
+                if deck:
+                    deck_name = deck['name']
+            except:
+                pass
+        
+        try:
+            from .suggestion_dialog import CardSuggestionBrowser
+            dialog = CardSuggestionBrowser(deck_id, deck_name, self)
+            dialog.exec()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to open suggestion browser:\n{str(e)}")
+            print(f"Suggestion browser error: {e}")
             import traceback
             traceback.print_exc()
     
