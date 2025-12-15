@@ -248,6 +248,11 @@ class NottorneyTabbedDialog(QDialog):
         suggest_btn.clicked.connect(self.open_suggestion_browser)
         btn_layout.addWidget(suggest_btn)
         
+        advanced_sync_btn = QPushButton("⚡ Advanced")
+        advanced_sync_btn.setToolTip("Advanced sync: tags, suspend, media, note types")
+        advanced_sync_btn.clicked.connect(self.open_advanced_sync_dialog)
+        btn_layout.addWidget(advanced_sync_btn)
+        
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
         
@@ -648,6 +653,49 @@ class NottorneyTabbedDialog(QDialog):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to open suggestion browser:\n{str(e)}")
             print(f"Suggestion browser error: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def open_advanced_sync_dialog(self):
+        """Open advanced sync dialog for selected deck"""
+        current = self.my_decks_list.currentItem()
+        if not current:
+            QMessageBox.warning(
+                self, "No Selection",
+                "Please select a deck from 'My Decks' for advanced sync."
+            )
+            return
+        
+        data = current.data(Qt.ItemDataRole.UserRole)
+        if not data or not isinstance(data, dict):
+            QMessageBox.warning(self, "Error", "Could not get deck information.")
+            return
+        
+        deck_id = data.get('deck_id')
+        if not deck_id:
+            QMessageBox.warning(self, "Error", "Could not determine deck ID.")
+            return
+        
+        # Get deck name
+        deck_info = data.get('deck_info', {})
+        anki_deck_id = deck_info.get('anki_deck_id')
+        deck_name = f"Deck {deck_id[:8]}"
+        
+        if anki_deck_id and mw.col:
+            try:
+                deck = mw.col.decks.get(int(anki_deck_id))
+                if deck:
+                    deck_name = deck['name']
+            except:
+                pass
+        
+        try:
+            from .advanced_sync_dialog import AdvancedSyncDialog
+            dialog = AdvancedSyncDialog(deck_id, deck_name, self)
+            dialog.exec()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to open advanced sync:\n{str(e)}")
+            print(f"Advanced sync error: {e}")
             import traceback
             traceback.print_exc()
     
