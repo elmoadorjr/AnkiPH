@@ -26,13 +26,19 @@ try:
         from .ui.single_dialog import MinimalNottorneyDialog as MainDialog
         
 except ImportError as e:
-    def show_error():
-        showInfo(f"Nottorney addon import error: {str(e)}\n\nPlease check that all files are present.")
-    show_error()
+    # Defer error display until Anki is ready (mw might not be initialized yet)
+    _import_error = str(e)
+    
+    def show_startup_error():
+        from aqt.utils import showInfo
+        showInfo(f"Nottorney addon import error: {_import_error}\n\nPlease check that all files are present.")
+    
+    from aqt import gui_hooks
+    gui_hooks.main_window_did_init.append(show_startup_error)
     raise
 
 ADDON_NAME = "Nottorney"
-ADDON_VERSION = "1.3.0"
+ADDON_VERSION = "2.0.0"
 
 
 def show_settings_dialog():

@@ -118,19 +118,20 @@ def calculate_retention_rate(deck_id: int) -> float:
         if not valid_card_ids:
             return 0.0
         
-        card_ids_str = ",".join(str(cid) for cid in valid_card_ids)
+        # Use parameterized query with placeholders (prevent SQL injection)
+        placeholders = ",".join("?" * len(valid_card_ids))
         
-        # Query review log
+        # Query review log with parameterized values
         query = f"""
             SELECT 
                 COUNT(*) as total_reviews,
                 SUM(CASE WHEN ease >= 2 THEN 1 ELSE 0 END) as correct_reviews
             FROM revlog
-            WHERE cid IN ({card_ids_str})
-            AND id >= {cutoff_time}
+            WHERE cid IN ({placeholders})
+            AND id >= ?
         """
         
-        result = mw.col.db.first(query)
+        result = mw.col.db.first(query, *valid_card_ids, cutoff_time)
         
         if not result or result[0] == 0:
             return 0.0

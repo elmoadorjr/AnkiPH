@@ -9,6 +9,7 @@ from aqt.utils import showInfo, tooltip
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 import traceback
+import threading
 
 from .api_client import api, NottorneyAPIError, set_access_token
 from .config import config
@@ -19,6 +20,7 @@ class UpdateChecker:
     
     def __init__(self):
         self.checking = False
+        self._checking_lock = threading.Lock()
     
     def should_check_updates(self) -> bool:
         """
@@ -57,7 +59,8 @@ class UpdateChecker:
         Returns:
             Dict of updates or None if check failed
         """
-        if self.checking:
+        # Thread-safe check to prevent concurrent update checks
+        if not self._checking_lock.acquire(blocking=False):
             print("Update check already in progress")
             return None
         
@@ -157,6 +160,7 @@ class UpdateChecker:
         
         finally:
             self.checking = False
+            self._checking_lock.release()
     
     def _show_update_summary(self, updates_dict: Dict):
         """
