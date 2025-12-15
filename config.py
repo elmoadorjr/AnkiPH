@@ -1,8 +1,8 @@
 """
 Configuration management for the Nottorney addon
+FIXED: Profile-specific deck tracking using collection metadata
 ENHANCED: Added update checking, notification tracking, and sync state management
-FIXED: Added v1.1.0 migration for existing users
-Version: 1.1.0
+Version: 1.1.1
 """
 
 from aqt import mw
@@ -74,12 +74,12 @@ class Config:
             "api_url": "https://ladvckxztcleljbiomcf.supabase.co/functions/v1",
             "auto_sync_enabled": True,
             "auto_sync_interval_hours": 1,
-            "downloaded_decks": {},
+            # NOTE: downloaded_decks removed from global config - now profile-specific
             "access_token": None,
             "refresh_token": None,
             "expires_at": None,
             "user": None,
-            "ui_mode": "tabbed",  # Changed default to "tabbed" for new UI
+            "ui_mode": "tabbed",
             "last_notification_check": None,
             "unread_notification_count": 0,
             "last_update_check": None,
@@ -88,7 +88,7 @@ class Config:
             "available_updates": {},
             "sync_state": {},
             "protected_fields": {},
-            "migrated_to_v1_1_0": False  # NEW: Track migration status
+            "migrated_to_v1_1_0": False
         }
     
     def _save_config(self, data):
@@ -116,6 +116,35 @@ class Config:
         """Invalidate the config cache"""
         self._config_cache = None
         self._cache_timestamp = 0
+    
+    # === PROFILE-SPECIFIC METADATA STORAGE ===
+    
+    def _get_profile_meta(self, key: str, default=None):
+        """Get profile-specific metadata from collection"""
+        if not mw.col:
+            return default
+        
+        try:
+            meta_key = f"nottorney_{key}"
+            value = mw.col.get_config(meta_key, default)
+            return value
+        except Exception as e:
+            print(f"✗ Error reading profile meta '{key}': {e}")
+            return default
+    
+    def _set_profile_meta(self, key: str, value):
+        """Set profile-specific metadata in collection"""
+        if not mw.col:
+            print(f"✗ Cannot save profile meta '{key}': no collection")
+            return False
+        
+        try:
+            meta_key = f"nottorney_{key}"
+            mw.col.set_config(meta_key, value)
+            return True
+        except Exception as e:
+            print(f"✗ Error saving profile meta '{key}': {e}")
+            return False
     
     # === AUTHENTICATION ===
     
@@ -167,10 +196,17 @@ class Config:
             print("✗ Failed to clear tokens")
         return success
     
-    # === DOWNLOADED DECKS TRACKING ===
+    # === DOWNLOADED DECKS TRACKING (PROFILE-SPECIFIC) ===
     
     def save_downloaded_deck(self, deck_id, version, anki_deck_id):
-        """Track a downloaded deck"""
+        """
+        Track a downloaded deck (PROFILE-SPECIFIC)
+        
+        Args:
+            deck_id: Nottorney deck ID
+            version: Deck version
+            anki_deck_id: Anki's internal deck ID
+        """
         if not deck_id:
             print("✗ Cannot save deck: no deck_id provided")
             return False
@@ -182,44 +218,48 @@ class Config:
             print(f"✗ Cannot save deck: invalid anki_deck_id '{anki_deck_id}' ({e})")
             return False
         
-        cfg = self._get_config()
+        # Get current downloaded decks for this profile
+        downloaded_decks = self._get_profile_meta('downloaded_decks', {})
         
-        if 'downloaded_decks' not in cfg or not isinstance(cfg['downloaded_decks'], dict):
-            cfg['downloaded_decks'] = {}
+        if not isinstance(downloaded_decks, dict):
+            downloaded_decks = {}
         
         # Save deck info
-        cfg['downloaded_decks'][str(deck_id)] = {
+        downloaded_decks[str(deck_id)] = {
             'version': str(version),
             'anki_deck_id': anki_deck_id,
             'downloaded_at': datetime.now().isoformat(),
             'last_synced': None
         }
         
-        success = self._save_config(cfg)
+        # Save back to profile metadata
+        success = self._set_profile_meta('downloaded_decks', downloaded_decks)
         
         if success:
-            print(f"✓ Saved deck: {deck_id} v{version} (Anki ID: {anki_deck_id})")
+            print(f"✓ Saved deck to profile: {deck_id} v{version} (Anki ID: {anki_deck_id})")
         else:
-            print(f"✗ Failed to save deck: {deck_id}")
+            print(f"✗ Failed to save deck to profile: {deck_id}")
         
         return success
     
     def get_downloaded_decks(self):
-        """Get dictionary of downloaded decks"""
-        self._invalidate_cache()
-        cfg = self._get_config()
-        decks = cfg.get('downloaded_decks', {})
+        """Get dictionary of downloaded decks (PROFILE-SPECIFIC)"""
+        if not mw.col:
+            print("⚠ No collection available")
+            return {}
+        
+        decks = self._get_profile_meta('downloaded_decks', {})
         
         # Ensure it's a dictionary
         if not isinstance(decks, dict):
             print(f"⚠ downloaded_decks is not a dict, resetting")
             decks = {}
         
-        print(f"Retrieved {len(decks)} tracked deck(s)")
+        print(f"Retrieved {len(decks)} tracked deck(s) for current profile")
         return decks
     
     def is_deck_downloaded(self, deck_id):
-        """Check if a deck is downloaded"""
+        """Check if a deck is downloaded (PROFILE-SPECIFIC)"""
         if not deck_id:
             return False
         
@@ -258,12 +298,12 @@ class Config:
         if not deck_id:
             return False
         
-        cfg = self._get_config()
+        downloaded_decks = self.get_downloaded_decks()
         
-        if str(deck_id) in cfg.get('downloaded_decks', {}):
-            cfg['downloaded_decks'][str(deck_id)]['version'] = str(new_version)
-            cfg['downloaded_decks'][str(deck_id)]['updated_at'] = datetime.now().isoformat()
-            return self._save_config(cfg)
+        if str(deck_id) in downloaded_decks:
+            downloaded_decks[str(deck_id)]['version'] = str(new_version)
+            downloaded_decks[str(deck_id)]['updated_at'] = datetime.now().isoformat()
+            return self._set_profile_meta('downloaded_decks', downloaded_decks)
         
         return False
     
@@ -275,32 +315,31 @@ class Config:
         
         print(f"Removing deck from tracking: {deck_id}")
         
-        self._invalidate_cache()
-        cfg = self._get_config()
+        downloaded_decks = self.get_downloaded_decks()
         
-        if 'downloaded_decks' not in cfg or not isinstance(cfg['downloaded_decks'], dict):
+        if not isinstance(downloaded_decks, dict):
             print(f"✓ Deck {deck_id} not tracked (no tracking data)")
             return True
         
         deck_id_str = str(deck_id)
         
-        if deck_id_str not in cfg['downloaded_decks']:
+        if deck_id_str not in downloaded_decks:
             print(f"✓ Deck {deck_id} not tracked (already removed)")
             return True
         
         # Remove from tracking
-        del cfg['downloaded_decks'][deck_id_str]
+        del downloaded_decks[deck_id_str]
         
-        success = self._save_config(cfg)
+        success = self._set_profile_meta('downloaded_decks', downloaded_decks)
         
         if success:
-            print(f"✓ Removed deck from tracking: {deck_id}")
+            print(f"✓ Removed deck from profile tracking: {deck_id}")
         else:
             print(f"✗ Failed to remove deck: {deck_id}")
         
         return success
     
-    # === UPDATE CHECKING (NEW) ===
+    # === UPDATE CHECKING (GLOBAL) ===
     
     def get_last_update_check(self):
         """Get timestamp of last update check"""
@@ -367,7 +406,7 @@ class Config:
         
         return True
     
-    # === NOTIFICATION TRACKING (NEW) ===
+    # === NOTIFICATION TRACKING (GLOBAL) ===
     
     def get_last_notification_check(self):
         """Get timestamp of last notification check"""
@@ -392,7 +431,7 @@ class Config:
         cfg['unread_notification_count'] = int(count)
         return self._save_config(cfg)
     
-    # === SYNC STATE (NEW) ===
+    # === SYNC STATE (GLOBAL) ===
     
     def get_sync_state(self, deck_id):
         """Get sync state for a deck"""
@@ -431,7 +470,7 @@ class Config:
         
         return True
     
-    # === PROTECTED FIELDS (NEW) ===
+    # === PROTECTED FIELDS (GLOBAL) ===
     
     def get_protected_fields(self, deck_id):
         """Get list of protected field names for a deck"""
