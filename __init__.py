@@ -2,6 +2,7 @@
 Nottorney Anki Addon - Enhanced Version
 PyQt6 Compatible - v1.1.0
 NEW: Update checking, tabbed UI, notifications
+FIXED: Import errors resolved
 """
 
 from aqt import mw, gui_hooks
@@ -57,6 +58,8 @@ def show_main_dialog():
     except Exception as e:
         showInfo(f"Error opening Nottorney dialog:\n{str(e)}")
         print(f"Dialog error: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
         _dialog_instance = None
 
