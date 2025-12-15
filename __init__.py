@@ -1,7 +1,7 @@
 """
 Nottorney Anki Addon - Enhanced Version
-PyQt6 Compatible - v1.1.0
-NEW: Update checking, tabbed UI, notifications
+PyQt6 Compatible - v1.3.0
+NEW: Update checking, tabbed UI, notifications, settings dialog
 FIXED: Import errors resolved
 """
 
@@ -32,7 +32,20 @@ except ImportError as e:
     raise
 
 ADDON_NAME = "Nottorney"
-ADDON_VERSION = "1.1.0"
+ADDON_VERSION = "1.3.0"
+
+
+def show_settings_dialog():
+    """Show settings dialog"""
+    try:
+        from .ui.settings_dialog import SettingsDialog
+        dialog = SettingsDialog(mw)
+        dialog.exec()
+    except Exception as e:
+        showInfo(f"Error opening settings:\n{str(e)}")
+        print(f"Settings dialog error: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 def show_main_dialog():
@@ -93,9 +106,9 @@ def setup_menu():
         # Add separator
         menu.addSeparator()
         
-        # Add "Settings" action (placeholder for future)
+        # Add "Settings" action
         settings_action = QAction("Settings", mw)
-        settings_action.setEnabled(False)  # Disabled for now
+        settings_action.triggered.connect(show_settings_dialog)
         menu.addAction(settings_action)
         
         print(f"✓ Nottorney addon v{ADDON_VERSION} loaded successfully")

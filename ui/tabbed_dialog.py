@@ -147,6 +147,16 @@ class NottorneyTabbedDialog(QDialog):
             )
             user_layout.addWidget(update_badge)
         
+        # Check for notifications badge
+        notif_count = config.get_unread_notification_count()
+        if notif_count > 0:
+            notif_badge = QLabel(f"📬 {notif_count} notification(s)")
+            notif_badge.setStyleSheet(
+                "background-color: #2196F3; color: white; "
+                "padding: 5px 10px; border-radius: 10px; font-weight: bold;"
+            )
+            user_layout.addWidget(notif_badge)
+        
         user_bar.setLayout(user_layout)
         layout.addWidget(user_bar)
         
@@ -158,10 +168,13 @@ class NottorneyTabbedDialog(QDialog):
         self.my_decks_tab = self.create_my_decks_tab()
         self.browse_tab = self.create_browse_tab()
         self.updates_tab = self.create_updates_tab()
+        self.notifications_tab = self.create_notifications_tab()
         
         self.tabs.addTab(self.my_decks_tab, "📚 My Decks")
         self.tabs.addTab(self.browse_tab, "🔍 Browse")
         self.tabs.addTab(self.updates_tab, f"🔄 Updates ({update_count})")
+        notif_tab_label = f"📬 Notifications ({notif_count})" if notif_count > 0 else "📬 Notifications"
+        self.tabs.addTab(self.notifications_tab, notif_tab_label)
         
         layout.addWidget(self.tabs)
         
@@ -186,6 +199,7 @@ class NottorneyTabbedDialog(QDialog):
         self.load_my_decks()
         self.load_browse_decks()
         self.load_updates()
+        self.load_notifications()
     
     def create_my_decks_tab(self):
         """Create My Decks tab"""
@@ -218,6 +232,11 @@ class NottorneyTabbedDialog(QDialog):
         sync_btn.setToolTip("Sync your study progress to server")
         sync_btn.clicked.connect(self.sync_progress)
         btn_layout.addWidget(sync_btn)
+        
+        sync_changes_btn = QPushButton("🔄 Sync Changes")
+        sync_changes_btn.setToolTip("Push/pull card changes with server")
+        sync_changes_btn.clicked.connect(self.open_sync_dialog)
+        btn_layout.addWidget(sync_changes_btn)
         
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
@@ -304,6 +323,61 @@ class NottorneyTabbedDialog(QDialog):
         update_selected_btn = QPushButton("⬇️ Update Selected")
         update_selected_btn.clicked.connect(self.update_selected_deck)
         btn_layout.addWidget(update_selected_btn)
+        
+        btn_layout.addStretch()
+        layout.addLayout(btn_layout)
+        
+        tab.setLayout(layout)
+        return tab
+    
+    def create_notifications_tab(self):
+        """Create Notifications tab"""
+        tab = QWidget()
+        layout = QVBoxLayout()
+        
+        # Header
+        header_layout = QHBoxLayout()
+        header = QLabel("Your Notifications")
+        header.setStyleSheet("font-weight: bold; font-size: 14px; padding: 5px;")
+        header_layout.addWidget(header)
+        header_layout.addStretch()
+        
+        refresh_btn = QPushButton("🔄 Refresh")
+        refresh_btn.clicked.connect(self.check_notifications_now)
+        header_layout.addWidget(refresh_btn)
+        
+        layout.addLayout(header_layout)
+        
+        # Notifications list
+        self.notifications_list = QListWidget()
+        self.notifications_list.setStyleSheet("""
+            QListWidget::item { 
+                padding: 12px; 
+                border-bottom: 1px solid #eee;
+            }
+            QListWidget::item:selected {
+                background-color: #e3f2fd;
+            }
+        """)
+        self.notifications_list.itemDoubleClicked.connect(self.view_notification_details)
+        layout.addWidget(self.notifications_list)
+        
+        # Status
+        self.notifications_status = QLabel("")
+        self.notifications_status.setStyleSheet("color: #666; font-size: 11px; padding: 5px;")
+        layout.addWidget(self.notifications_status)
+        
+        # Buttons
+        btn_layout = QHBoxLayout()
+        
+        mark_read_btn = QPushButton("✓ Mark All Read")
+        mark_read_btn.setStyleSheet("padding: 8px;")
+        mark_read_btn.clicked.connect(self.mark_all_notifications_read)
+        btn_layout.addWidget(mark_read_btn)
+        
+        mark_selected_btn = QPushButton("✓ Mark Selected Read")
+        mark_selected_btn.clicked.connect(self.mark_selected_notification_read)
+        btn_layout.addWidget(mark_selected_btn)
         
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
@@ -438,6 +512,49 @@ class NottorneyTabbedDialog(QDialog):
             self.my_decks_status.setText("❌ Sync failed")
             QMessageBox.critical(self, "Sync Error", f"Failed to sync progress:\n{str(e)}")
     
+    def open_sync_dialog(self):
+        """Open sync dialog for selected deck"""
+        current = self.my_decks_list.currentItem()
+        if not current:
+            QMessageBox.warning(
+                self, "No Selection",
+                "Please select a deck from 'My Decks' to sync."
+            )
+            return
+        
+        data = current.data(Qt.ItemDataRole.UserRole)
+        if not data or not isinstance(data, dict):
+            QMessageBox.warning(self, "Error", "Could not get deck information.")
+            return
+        
+        deck_id = data.get('deck_id')
+        if not deck_id:
+            QMessageBox.warning(self, "Error", "Could not determine deck ID.")
+            return
+        
+        # Get deck name from Anki if possible
+        deck_info = data.get('deck_info', {})
+        anki_deck_id = deck_info.get('anki_deck_id')
+        deck_name = f"Deck {deck_id[:8]}"
+        
+        if anki_deck_id and mw.col:
+            try:
+                deck = mw.col.decks.get(int(anki_deck_id))
+                if deck:
+                    deck_name = deck['name']
+            except:
+                pass
+        
+        try:
+            from .sync_dialog import SyncDialog
+            dialog = SyncDialog(deck_id, deck_name, self)
+            dialog.exec()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to open sync dialog:\n{str(e)}")
+            print(f"Sync dialog error: {e}")
+            import traceback
+            traceback.print_exc()
+    
     # === BROWSE TAB ===
     
     def load_browse_decks(self):
@@ -566,14 +683,134 @@ class NottorneyTabbedDialog(QDialog):
         
         reply = QMessageBox.question(
             self, "Confirm Update All",
-            f"Update {len(updates)} deck(s)?",
+            f"Update {len(updates)} deck(s)?\n\nThis will download the latest versions.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
         
         if reply == QMessageBox.StandardButton.Yes:
-            # TODO: Implement batch update
-            QMessageBox.information(self, "Coming Soon", 
-                                  "Batch update feature coming in next version!")
+            self._perform_batch_update(list(updates.keys()))
+    
+    def _perform_batch_update(self, deck_ids: list):
+        """Perform batch update for given deck IDs"""
+        if not deck_ids:
+            return
+        
+        token = config.get_access_token()
+        if not token:
+            QMessageBox.warning(self, "Not Logged In", "Please login first.")
+            return
+        
+        set_access_token(token)
+        self.import_in_progress = True
+        self.main_close_btn.setEnabled(False)
+        
+        # Track progress
+        self._update_queue = deck_ids.copy()
+        self._update_success_count = 0
+        self._update_fail_count = 0
+        self._total_updates = len(deck_ids)
+        
+        self.updates_status.setText(f"⏳ Updating 0/{self._total_updates}...")
+        
+        # Start updating first deck
+        self._update_next_deck()
+    
+    def _update_next_deck(self):
+        """Update the next deck in queue"""
+        if not self._update_queue:
+            # All done
+            self._finish_batch_update()
+            return
+        
+        deck_id = self._update_queue.pop(0)
+        current_num = self._total_updates - len(self._update_queue)
+        
+        self.updates_status.setText(f"⏳ Updating {current_num}/{self._total_updates}...")
+        
+        try:
+            # Get download URL
+            result = api.download_deck(deck_id)
+            
+            if not result.get('success'):
+                raise Exception(result.get('message', 'Failed to get download URL'))
+            
+            download_url = result.get('download_url')
+            if not download_url:
+                raise Exception("No download URL received")
+            
+            # Download deck file
+            deck_content = api.download_deck_file(download_url)
+            
+            if not deck_content:
+                raise Exception("Downloaded file is empty")
+            
+            # Get update info for version
+            update_info = config.get_available_updates().get(deck_id, {})
+            deck_version = update_info.get('latest_version', '1.0')
+            
+            # Import deck
+            def on_success(anki_deck_id):
+                # Update tracking with new version
+                config.save_downloaded_deck(deck_id, deck_version, anki_deck_id)
+                # Clear update notification
+                update_checker.clear_update(deck_id)
+                self._update_success_count += 1
+                # Continue to next deck
+                self._update_next_deck()
+            
+            def on_failure(error_msg):
+                print(f"✗ Failed to update deck {deck_id}: {error_msg}")
+                self._update_fail_count += 1
+                # Continue to next deck anyway
+                self._update_next_deck()
+            
+            import_deck_with_progress(
+                deck_content, 
+                f"Deck {deck_id[:8]}", 
+                on_success=on_success,
+                on_failure=on_failure,
+                parent=self
+            )
+            
+        except Exception as e:
+            print(f"✗ Error updating deck {deck_id}: {e}")
+            self._update_fail_count += 1
+            # Continue to next deck
+            self._update_next_deck()
+    
+    def _finish_batch_update(self):
+        """Finish batch update and show results"""
+        self.import_in_progress = False
+        self.main_close_btn.setEnabled(True)
+        
+        # Reset main window to show changes
+        mw.reset()
+        
+        # Show results
+        if self._update_fail_count == 0:
+            self.updates_status.setText(f"✓ All {self._update_success_count} deck(s) updated successfully!")
+            QMessageBox.information(
+                self, "Update Complete",
+                f"Successfully updated {self._update_success_count} deck(s)!"
+            )
+        else:
+            self.updates_status.setText(
+                f"⚠️ Updated {self._update_success_count}, failed {self._update_fail_count}"
+            )
+            QMessageBox.warning(
+                self, "Update Complete",
+                f"Updated: {self._update_success_count}\nFailed: {self._update_fail_count}\n\n"
+                "Check the console for error details."
+            )
+        
+        # Reload all tabs
+        self.load_my_decks()
+        self.load_browse_decks()
+        self.load_updates()
+        
+        # Update tab badge
+        update_count = update_checker.get_update_count()
+        self.tabs.setTabText(2, f"🔄 Updates ({update_count})")
     
     def update_selected_deck(self):
         """Update selected deck"""
@@ -582,9 +819,202 @@ class NottorneyTabbedDialog(QDialog):
             QMessageBox.warning(self, "No Selection", "Please select a deck to update.")
             return
         
-        # TODO: Implement single deck update
-        QMessageBox.information(self, "Coming Soon", 
-                              "Individual deck update feature coming in next version!")
+        update_info = current.data(Qt.ItemDataRole.UserRole)
+        if not update_info or not isinstance(update_info, dict):
+            QMessageBox.warning(self, "Error", "Could not get deck information.")
+            return
+        
+        deck_id = update_info.get('deck_id')
+        if not deck_id:
+            QMessageBox.warning(self, "Error", "Could not determine deck ID.")
+            return
+        
+        current_ver = update_info.get('current_version', '?')
+        latest_ver = update_info.get('latest_version', '?')
+        
+        reply = QMessageBox.question(
+            self, "Confirm Update",
+            f"Update deck from v{current_ver} to v{latest_ver}?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            # Reuse batch update infrastructure for single deck
+            self._perform_batch_update([deck_id])
+    
+    # === NOTIFICATIONS TAB ===
+    
+    def load_notifications(self):
+        """Load notifications from server or cache"""
+        self.notifications_list.clear()
+        self.notifications_status.setText("⏳ Loading notifications...")
+        
+        token = config.get_access_token()
+        if not token:
+            self.notifications_status.setText("❌ Not logged in")
+            return
+        
+        set_access_token(token)
+        
+        try:
+            result = api.check_notifications(mark_as_read=False, limit=20)
+            
+            if not result.get('success'):
+                self.notifications_status.setText("❌ Failed to load notifications")
+                return
+            
+            notifications = result.get('notifications', [])
+            unread_count = result.get('unread_count', 0)
+            
+            # Update stored count
+            config.set_unread_notification_count(unread_count)
+            
+            if not notifications:
+                self.notifications_status.setText("No notifications")
+                item = QListWidgetItem("📭 No notifications yet")
+                item.setForeground(Qt.GlobalColor.gray)
+                self.notifications_list.addItem(item)
+                return
+            
+            for notif in notifications:
+                notif_id = notif.get('id', '')
+                notif_type = notif.get('type', 'info')
+                title = notif.get('title', 'Notification')
+                message = notif.get('message', '')
+                created_at = notif.get('created_at', '')
+                is_read = notif.get('read', False)
+                
+                # Format display
+                type_icons = {
+                    'deck_update': '🔄',
+                    'announcement': '📢',
+                    'promotion': '🎁',
+                    'system': '⚙️',
+                    'info': 'ℹ️'
+                }
+                icon = type_icons.get(notif_type, 'ℹ️')
+                read_indicator = "" if is_read else "● "
+                
+                # Parse date if available
+                date_str = ""
+                if created_at:
+                    try:
+                        from datetime import datetime
+                        dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                        date_str = dt.strftime("%m/%d %H:%M")
+                    except:
+                        date_str = ""
+                
+                display_text = f"{read_indicator}{icon} {title}"
+                if message:
+                    display_text += f"\n   {message[:60]}{'...' if len(message) > 60 else ''}"
+                if date_str:
+                    display_text += f"\n   {date_str}"
+                
+                item = QListWidgetItem(display_text)
+                item.setData(Qt.ItemDataRole.UserRole, notif)
+                
+                if not is_read:
+                    item.setForeground(Qt.GlobalColor.blue)
+                else:
+                    item.setForeground(Qt.GlobalColor.darkGray)
+                
+                self.notifications_list.addItem(item)
+            
+            self.notifications_status.setText(f"✓ {len(notifications)} notification(s), {unread_count} unread")
+            
+            # Update tab badge
+            tab_label = f"📬 Notifications ({unread_count})" if unread_count > 0 else "📬 Notifications"
+            self.tabs.setTabText(3, tab_label)
+            
+        except NottorneyAPIError as e:
+            error_msg = str(e)
+            if e.status_code == 401:
+                error_msg = "Session expired"
+                config.clear_tokens()
+            self.notifications_status.setText(f"❌ {error_msg}")
+        
+        except Exception as e:
+            self.notifications_status.setText(f"❌ Failed to load")
+            print(f"Error loading notifications: {e}")
+    
+    def check_notifications_now(self):
+        """Manually refresh notifications"""
+        self.load_notifications()
+    
+    def view_notification_details(self, item):
+        """View full notification details"""
+        notif = item.data(Qt.ItemDataRole.UserRole)
+        if not notif or not isinstance(notif, dict):
+            return
+        
+        title = notif.get('title', 'Notification')
+        message = notif.get('message', 'No details available.')
+        notif_type = notif.get('type', 'info')
+        created_at = notif.get('created_at', '')
+        
+        # Format date
+        date_str = ""
+        if created_at:
+            try:
+                from datetime import datetime
+                dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                date_str = dt.strftime("%Y-%m-%d %H:%M")
+            except:
+                date_str = created_at
+        
+        details = f"{title}\n\n{message}"
+        if date_str:
+            details += f"\n\nReceived: {date_str}"
+        
+        QMessageBox.information(self, title, details)
+    
+    def mark_all_notifications_read(self):
+        """Mark all notifications as read"""
+        token = config.get_access_token()
+        if not token:
+            QMessageBox.warning(self, "Not Logged In", "Please login first.")
+            return
+        
+        set_access_token(token)
+        
+        try:
+            self.notifications_status.setText("⏳ Marking as read...")
+            
+            # Call API with mark_as_read=True
+            result = api.check_notifications(mark_as_read=True, limit=20)
+            
+            if result.get('success'):
+                config.set_unread_notification_count(0)
+                self.notifications_status.setText("✓ All notifications marked as read")
+                
+                # Reload to update UI
+                self.load_notifications()
+            else:
+                self.notifications_status.setText("❌ Failed to mark as read")
+        
+        except Exception as e:
+            self.notifications_status.setText("❌ Error")
+            print(f"Error marking notifications read: {e}")
+    
+    def mark_selected_notification_read(self):
+        """Mark selected notification as read"""
+        current = self.notifications_list.currentItem()
+        if not current:
+            QMessageBox.warning(self, "No Selection", "Please select a notification.")
+            return
+        
+        notif = current.data(Qt.ItemDataRole.UserRole)
+        if not notif or not isinstance(notif, dict):
+            return
+        
+        # For now, just mark all as read (API may not support individual marking)
+        # This could be enhanced if the API supports marking individual notifications
+        QMessageBox.information(
+            self, "Info",
+            "Individual notification marking is not yet supported.\n\n"
+            "Use 'Mark All Read' to clear all notifications."
+        )
     
     # === COMMON DOWNLOAD LOGIC ===
     
