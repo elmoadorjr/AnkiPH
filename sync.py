@@ -1,11 +1,13 @@
 """
 Progress syncing for the Nottorney addon - FIXED VERSION
 Syncs study progress to the server with improved error handling
+FIXED: Now properly sets access token before syncing
+Version: 1.0.1
 """
 
 from aqt import mw
 from datetime import datetime, timedelta
-from .api_client import api, NottorneyAPIError
+from .api_client import api, NottorneyAPIError, set_access_token
 from .config import config
 from .deck_importer import get_deck_stats, deck_exists
 
@@ -337,6 +339,14 @@ def sync_progress():
     if not config.is_logged_in():
         raise Exception("Not logged in. Please login first.")
     
+    # FIXED: Set access token BEFORE making API calls
+    token = config.get_access_token()
+    if not token:
+        raise Exception("No access token found. Please login again.")
+    
+    set_access_token(token)
+    print(f"✓ Access token set for sync")
+    
     try:
         # Clean up deleted decks first
         cleaned = clean_deleted_decks()
@@ -369,6 +379,7 @@ def sync_progress():
     except NottorneyAPIError as e:
         if e.status_code == 401:
             print(f"✗ Sync failed: Session expired")
+            config.clear_tokens()  # Clear expired tokens
             raise Exception("Session expired. Please login again.")
         else:
             print(f"✗ Sync failed: {e}")
