@@ -2,7 +2,7 @@
 Progress syncing for the Nottorney addon - FIXED VERSION
 Syncs study progress to the server with improved error handling
 FIXED: Now properly sets access token before syncing
-Version: 1.0.1
+Version: 2.1.0
 """
 
 from aqt import mw

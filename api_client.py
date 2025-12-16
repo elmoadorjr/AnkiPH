@@ -1,7 +1,7 @@
 """
 Robust API client for Nottorney Add-on
 ENHANCED: Added update checking, notifications, and AnkiHub-parity endpoints
-Version: 1.1.0
+Version: 2.1.0
 """
 
 from __future__ import annotations

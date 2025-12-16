@@ -1,7 +1,7 @@
 """
 Update checking service for Nottorney addon
 Checks for deck updates in the background and notifies users
-Version: 1.1.0
+Version: 2.1.0
 """
 
 from aqt import mw
@@ -284,6 +284,74 @@ class UpdateChecker:
             self.check_for_updates(silent=True)
         except Exception as e:
             print(f"✗ Auto-update check failed (non-critical): {e}")
+    
+    def auto_apply_updates(self):
+        """
+        Automatically download and apply all available updates.
+        Called on startup for hands-off sync experience.
+        """
+        updates = config.get_available_updates()
+        
+        if not updates:
+            print("No updates to auto-apply")
+            return
+        
+        print(f"Auto-applying {len(updates)} update(s)...")
+        
+        # Import here to avoid circular import
+        from .deck_importer import import_deck
+        
+        success_count = 0
+        fail_count = 0
+        
+        for deck_id, update_info in updates.items():
+            try:
+                # Get download URL
+                result = api.download_deck(deck_id)
+                
+                if not result.get('success'):
+                    print(f"✗ Failed to get download URL for {deck_id}")
+                    fail_count += 1
+                    continue
+                
+                download_url = result.get('download_url')
+                if not download_url:
+                    print(f"✗ No download URL for {deck_id}")
+                    fail_count += 1
+                    continue
+                
+                # Download the deck file
+                deck_content = api.download_deck_file(download_url)
+                
+                if not deck_content:
+                    print(f"✗ Failed to download deck file for {deck_id}")
+                    fail_count += 1
+                    continue
+                
+                # Import the deck (synchronous for background operation)
+                anki_deck_id = import_deck(deck_content, f"Update_{deck_id[:8]}")
+                
+                # Update tracking
+                new_version = update_info.get('latest_version', 'Unknown')
+                config.save_downloaded_deck(deck_id, new_version, anki_deck_id)
+                
+                # Clear the update notification
+                self.clear_update(deck_id)
+                
+                print(f"✓ Auto-updated deck {deck_id} to v{new_version}")
+                success_count += 1
+                
+            except Exception as e:
+                print(f"✗ Failed to auto-update deck {deck_id}: {e}")
+                fail_count += 1
+                continue
+        
+        # Show summary
+        if success_count > 0:
+            tooltip(f"⚖️ Nottorney: Updated {success_count} deck(s)", period=3000)
+        
+        if fail_count > 0:
+            print(f"⚠ {fail_count} deck(s) failed to auto-update")
 
 
 # Global update checker instance

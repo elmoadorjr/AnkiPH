@@ -1,7 +1,7 @@
 """
 Advanced Sync Dialog for Nottorney Addon
 Features: Tag sync, Suspend state sync, Media sync, Note type sync
-Version: 1.0.0
+Version: 2.1.0
 """
 
 from aqt.qt import (
@@ -369,15 +369,16 @@ class AdvancedSyncDialog(QDialog):
         self.status_label.setText("⏳ Syncing tags...")
         
         try:
-            direction = "both"
-            if self.tags_pull_new.isChecked() and not self.tags_push_local.isChecked():
-                direction = "pull"
-            elif self.tags_push_local.isChecked() and not self.tags_pull_new.isChecked():
-                direction = "push"
+            action = "pull"  # Default to pull
+            if self.tags_pull_new.isChecked() and self.tags_push_local.isChecked():
+                # Both checked - need two calls or use 'pull' (server truth)
+                action = "pull"
+            elif self.tags_push_local.isChecked():
+                action = "push"
             
             result = api.sync_tags(
                 deck_id=self.deck_id,
-                direction=direction
+                action=action
             )
             
             if result.get('success'):
@@ -453,16 +454,16 @@ class AdvancedSyncDialog(QDialog):
         self.status_label.setText("⏳ Syncing suspend state...")
         
         try:
-            direction = "both"
-            if self.suspend_pull.isChecked() and not self.suspend_push.isChecked():
-                direction = "pull"
-            elif self.suspend_push.isChecked() and not self.suspend_pull.isChecked():
-                direction = "push"
+            action = "pull"  # Default to pull
+            if self.suspend_pull.isChecked() and self.suspend_push.isChecked():
+                action = "pull"
+            elif self.suspend_push.isChecked():
+                action = "push"
             
             result = api.sync_suspend_state(
                 deck_id=self.deck_id,
-                direction=direction,
-                include_buried=self.suspend_include_buried.isChecked()
+                action=action
+                # Note: include_buried would need backend support
             )
             
             if result.get('success'):
@@ -546,10 +547,16 @@ class AdvancedSyncDialog(QDialog):
         self.status_label.setText("⏳ Syncing media...")
         
         try:
+            # Media sync uses action parameter
+            action = "list"
+            if self.media_download_missing.isChecked():
+                action = "download"
+            elif self.media_upload_new.isChecked():
+                action = "upload"
+            
             result = api.sync_media(
                 deck_id=self.deck_id,
-                download_missing=self.media_download_missing.isChecked(),
-                upload_new=self.media_upload_new.isChecked()
+                action=action
             )
             
             if result.get('success'):
@@ -638,11 +645,10 @@ class AdvancedSyncDialog(QDialog):
         self.status_label.setText("⏳ Syncing note types...")
         
         try:
+            # Note type sync uses action parameter
             result = api.sync_note_types(
                 deck_id=self.deck_id,
-                sync_templates=self.note_types_templates.isChecked(),
-                sync_styling=self.note_types_styling.isChecked(),
-                sync_fields=self.note_types_fields.isChecked()
+                action="get"  # Pull note types from server
             )
             
             if result.get('success'):

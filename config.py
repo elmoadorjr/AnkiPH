@@ -2,7 +2,7 @@
 Configuration management for the Nottorney addon
 FIXED: Profile-specific deck tracking using collection metadata
 ENHANCED: Added update checking, notification tracking, and sync state management
-Version: 1.1.1
+Version: 2.1.0
 """
 
 from aqt import mw
@@ -532,19 +532,7 @@ class Config:
         cfg = self._get_config()
         cfg['auto_sync_enabled'] = bool(enabled)
         return self._save_config(cfg)
-    
-    def get_ui_mode(self):
-        """Get UI mode (minimal or tabbed)"""
-        return self._get_config().get('ui_mode', 'tabbed')
-    
-    def set_ui_mode(self, mode):
-        """Set UI mode"""
-        if mode not in ['minimal', 'tabbed']:
-            mode = 'tabbed'
-        
-        cfg = self._get_config()
-        cfg['ui_mode'] = mode
-        return self._save_config(cfg)
+
 
 
 # Global config instance

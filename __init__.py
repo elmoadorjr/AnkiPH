@@ -1,13 +1,12 @@
 """
-Nottorney Anki Addon - Enhanced Version
-PyQt6 Compatible - v1.3.0
-NEW: Update checking, tabbed UI, notifications, settings dialog
-FIXED: Import errors resolved
+Nottorney Anki Addon - Simplified Version
+PyQt6 Compatible - v2.1.0
+SIMPLIFIED: Removed minimal UI mode, added auto-sync on startup
 """
 
 from aqt import mw, gui_hooks
 from aqt.qt import QAction
-from aqt.utils import showInfo
+from aqt.utils import showInfo, tooltip
 
 # Global reference to prevent garbage collection
 _dialog_instance = None
@@ -18,12 +17,8 @@ try:
     from .api_client import api, set_access_token
     from .update_checker import update_checker
     
-    # Import appropriate dialog based on config
-    ui_mode = config.get_ui_mode()
-    if ui_mode == "tabbed":
-        from .ui.tabbed_dialog import NottorneyTabbedDialog as MainDialog
-    else:
-        from .ui.single_dialog import MinimalNottorneyDialog as MainDialog
+    # Always use tabbed dialog (simplified - removed UI mode toggle)
+    from .ui.tabbed_dialog import NottorneyTabbedDialog as MainDialog
         
 except ImportError as e:
     # Defer error display until Anki is ready (mw might not be initialized yet)
@@ -38,7 +33,7 @@ except ImportError as e:
     raise
 
 ADDON_NAME = "Nottorney"
-ADDON_VERSION = "2.0.0"
+ADDON_VERSION = "2.1.0"
 
 
 def show_settings_dialog():
@@ -85,12 +80,31 @@ def show_main_dialog():
 
 def on_main_window_did_init():
     """Called when Anki's main window finishes initializing"""
-    # Auto-check for updates on startup if logged in
-    if config.is_logged_in():
-        try:
-            update_checker.auto_check_if_needed()
-        except Exception as e:
-            print(f"Auto-update check failed (non-critical): {e}")
+    if not config.is_logged_in():
+        return
+    
+    try:
+        # Set access token
+        token = config.get_access_token()
+        if token:
+            set_access_token(token)
+        
+        # Check for updates
+        updates = update_checker.check_for_updates(silent=True)
+        
+        # Auto-apply updates if any available
+        if updates and len(updates) > 0:
+            count = len(updates)
+            tooltip(f"⚖️ Nottorney: {count} deck update(s) available")
+            
+            # Try to auto-apply updates silently
+            try:
+                update_checker.auto_apply_updates()
+            except Exception as e:
+                print(f"Auto-apply updates failed (non-critical): {e}")
+                
+    except Exception as e:
+        print(f"Nottorney startup check failed (non-critical): {e}")
 
 
 def setup_menu():
@@ -118,7 +132,6 @@ def setup_menu():
         menu.addAction(settings_action)
         
         print(f"✓ Nottorney addon v{ADDON_VERSION} loaded successfully")
-        print(f"  UI Mode: {config.get_ui_mode()}")
         print(f"  Auto-update check: {config.get_auto_check_updates()}")
         
     except Exception as e:
@@ -133,3 +146,4 @@ try:
 except Exception as e:
     print(f"✗ Fatal error loading Nottorney addon: {e}")
     showInfo(f"Fatal error loading Nottorney addon:\n{str(e)}")
+

@@ -1,7 +1,7 @@
 """
 Settings Dialog for Nottorney Addon
 Features: General settings, Protected Fields, Sync, Admin (for admins)
-Version: 1.1.0
+Version: 2.1.0
 """
 
 from aqt.qt import (
@@ -117,18 +117,6 @@ class SettingsDialog(QDialog):
         """Create General settings tab"""
         tab = QWidget()
         layout = QVBoxLayout()
-        
-        # UI Mode
-        ui_group = QGroupBox("User Interface")
-        ui_layout = QFormLayout()
-        
-        self.ui_mode_combo = QComboBox()
-        self.ui_mode_combo.addItem("Tabbed (Modern)", "tabbed")
-        self.ui_mode_combo.addItem("Minimal (Legacy)", "minimal")
-        ui_layout.addRow("UI Mode:", self.ui_mode_combo)
-        
-        ui_group.setLayout(ui_layout)
-        layout.addWidget(ui_group)
         
         # Update Checking
         update_group = QGroupBox("Update Checking")
@@ -264,11 +252,6 @@ class SettingsDialog(QDialog):
     def load_settings(self):
         """Load current settings into UI"""
         # General tab
-        ui_mode = config.get_ui_mode()
-        index = self.ui_mode_combo.findData(ui_mode)
-        if index >= 0:
-            self.ui_mode_combo.setCurrentIndex(index)
-        
         self.auto_check_updates.setChecked(config.get_auto_check_updates())
         self.update_interval.setValue(config.get_update_check_interval_hours())
         self.auto_sync_enabled.setChecked(config.get_auto_sync_enabled())
@@ -280,6 +263,7 @@ class SettingsDialog(QDialog):
         self.sync_tags.setChecked(True)
         self.sync_suspend.setChecked(True)
         self.sync_note_types.setChecked(True)
+
     
     def load_deck_list(self):
         """Load downloaded decks into deck selector"""
@@ -1151,12 +1135,10 @@ class SettingsDialog(QDialog):
         """Save all settings"""
         try:
             # General settings
-            ui_mode = self.ui_mode_combo.currentData()
-            config.set_ui_mode(ui_mode)
-            
             config.set_auto_check_updates(self.auto_check_updates.isChecked())
             config.set_update_check_interval_hours(self.update_interval.value())
             config.set_auto_sync_enabled(self.auto_sync_enabled.isChecked())
+
             
             # Protected fields are saved immediately when added/removed
             

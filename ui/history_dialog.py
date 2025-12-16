@@ -1,7 +1,7 @@
 """
 Card History Dialog for Nottorney Addon
 Features: View card change history, Rollback to previous versions
-Version: 1.0.0
+Version: 2.1.0
 """
 
 from aqt.qt import (

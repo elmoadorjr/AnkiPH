@@ -2,7 +2,7 @@
 Modern Tabbed Dialog for Nottorney Addon
 Features: My Decks, Browse, Updates, Notifications tabs
 FIXED: Import errors resolved, proper relative imports
-Version: 1.1.3
+Version: 2.1.0
 """
 
 from aqt.qt import (

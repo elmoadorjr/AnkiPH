@@ -1,7 +1,7 @@
 """
 Sync Dialog for Nottorney Addon
 Features: Push/Pull changes, Conflict Resolution
-Version: 1.0.0
+Version: 2.1.0
 """
 
 from aqt.qt import (
@@ -432,32 +432,192 @@ class SyncDialog(QDialog):
             QMessageBox.warning(self, "No Selection", "Please select a change to pull.")
             return
         
-        QMessageBox.information(
-            self, "Coming Soon",
-            "Individual change pulling will be available in a future update."
-        )
+        change = current.data(Qt.ItemDataRole.UserRole)
+        if not change or not isinstance(change, dict):
+            QMessageBox.warning(self, "Error", "Could not read change data.")
+            return
+        
+        # Apply single change using same logic as _apply_pulled_changes
+        result = self._apply_single_change(change)
+        
+        if result == "applied":
+            # Remove from list
+            row = self.pull_changes_list.row(current)
+            self.pull_changes_list.takeItem(row)
+            self.status_label.setText("✓ Change applied")
+        elif result == "protected":
+            QMessageBox.warning(self, "Protected Field", "This field is protected and cannot be overwritten.")
+        elif result == "not_found":
+            QMessageBox.warning(self, "Not Found", "Card not found in local collection.")
+        else:
+            QMessageBox.warning(self, "Error", f"Failed to apply change: {result}")
+    
+    def _apply_single_change(self, change: dict) -> str:
+        """Apply a single change to local card. Returns: 'applied', 'protected', 'not_found', or error message"""
+        if not mw.col:
+            return "Collection not available"
+        
+        card_guid = change.get('card_guid')
+        field_name = change.get('field_name')
+        new_value = change.get('new_value', '')
+        
+        if not card_guid or not field_name:
+            return "Invalid change data"
+        
+        # Check if field is protected
+        protected_fields = config.get_protected_fields(self.deck_id)
+        if field_name in protected_fields:
+            return "protected"
+        
+        try:
+            note_id = mw.col.db.scalar("SELECT id FROM notes WHERE guid = ?", card_guid)
+            if not note_id:
+                return "not_found"
+            
+            note = mw.col.get_note(note_id)
+            model = note.note_type()
+            field_names = [f['name'] for f in model['flds']]
+            
+            if field_name not in field_names:
+                return f"Field '{field_name}' not found"
+            
+            field_index = field_names.index(field_name)
+            note.fields[field_index] = new_value
+            mw.col.update_note(note)
+            
+            print(f"✓ Applied change to {card_guid[:12]}...")
+            return "applied"
+            
+        except Exception as e:
+            return str(e)
     
     def _apply_pulled_changes(self):
         """Apply pulled changes to local cards"""
+        if not mw.col:
+            QMessageBox.critical(self, "Error", "Anki collection not available.")
+            return
+        
         self.status_label.setText("⏳ Applying changes...")
+        self.progress_bar.setVisible(True)
         
-        # TODO: Implement actual card updates
-        # This would need to:
-        # 1. Find local cards by GUID
-        # 2. Update field values
-        # 3. Save changes to Anki DB
+        # Get protected fields for this deck
+        protected_fields = config.get_protected_fields(self.deck_id)
         
-        # For now, just update sync state
-        config.save_sync_state(self.deck_id, {
+        # Collect all changes from the list
+        changes_to_apply = []
+        for i in range(self.pull_changes_list.count()):
+            item = self.pull_changes_list.item(i)
+            change = item.data(Qt.ItemDataRole.UserRole)
+            if change and isinstance(change, dict):
+                changes_to_apply.append(change)
+        
+        if not changes_to_apply:
+            self.status_label.setText("No changes to apply")
+            self.progress_bar.setVisible(False)
+            return
+        
+        # Track results
+        applied_count = 0
+        skipped_protected = 0
+        not_found = 0
+        errors = 0
+        last_change_id = None
+        
+        self.progress_bar.setRange(0, len(changes_to_apply))
+        
+        for i, change in enumerate(changes_to_apply):
+            self.progress_bar.setValue(i + 1)
+            
+            card_guid = change.get('card_guid')
+            field_name = change.get('field_name')
+            new_value = change.get('new_value', '')
+            change_id = change.get('change_id')
+            
+            if not card_guid or not field_name:
+                errors += 1
+                continue
+            
+            # Check if field is protected
+            if field_name in protected_fields:
+                skipped_protected += 1
+                print(f"⚠ Skipping protected field: {field_name}")
+                continue
+            
+            try:
+                # Find the note by GUID (same pattern as suggestion_dialog.py)
+                note_id = mw.col.db.scalar(
+                    "SELECT id FROM notes WHERE guid = ?", card_guid
+                )
+                
+                if not note_id:
+                    not_found += 1
+                    print(f"⚠ Note not found locally: {card_guid[:12]}...")
+                    continue
+                
+                note = mw.col.get_note(note_id)
+                
+                # Get field index by name
+                model = note.note_type()
+                field_names = [f['name'] for f in model['flds']]
+                
+                if field_name not in field_names:
+                    print(f"⚠ Field '{field_name}' not found in note type")
+                    errors += 1
+                    continue
+                
+                field_index = field_names.index(field_name)
+                
+                # Update the field value
+                note.fields[field_index] = new_value
+                
+                # Save the note
+                mw.col.update_note(note)
+                
+                applied_count += 1
+                if change_id:
+                    last_change_id = change_id
+                
+                print(f"✓ Updated {card_guid[:12]}... field '{field_name}'")
+                
+            except Exception as e:
+                errors += 1
+                print(f"✗ Error updating {card_guid[:12]}...: {e}")
+        
+        # Update sync state
+        sync_data = {
             'last_sync': datetime.now().isoformat(),
-            'pulled_changes': self.pull_changes_list.count()
-        })
+            'pulled_changes': applied_count
+        }
+        if last_change_id:
+            sync_data['last_change_id'] = last_change_id
         
-        self.status_label.setText("✓ Changes applied (sync state updated)")
+        config.save_sync_state(self.deck_id, sync_data)
+        
+        self.progress_bar.setVisible(False)
+        
+        # Show summary
+        summary = f"✓ Applied {applied_count} change(s)"
+        details = []
+        
+        if skipped_protected > 0:
+            details.append(f"{skipped_protected} skipped (protected)")
+        if not_found > 0:
+            details.append(f"{not_found} not found locally")
+        if errors > 0:
+            details.append(f"{errors} error(s)")
+        
+        if details:
+            summary += f" ({', '.join(details)})"
+        
+        self.status_label.setText(summary)
+        
         QMessageBox.information(
             self, "Sync Complete",
-            f"Sync state updated.\n\n"
-            "Note: Full card-level sync implementation coming soon."
+            f"Card sync completed!\n\n"
+            f"• Applied: {applied_count}\n"
+            f"• Protected (skipped): {skipped_protected}\n"
+            f"• Not found locally: {not_found}\n"
+            f"• Errors: {errors}"
         )
         
         # Refresh
@@ -465,19 +625,20 @@ class SyncDialog(QDialog):
     
     def push_all_changes(self):
         """Push all local changes to server"""
+        # Push requires tracking local edits, which needs Anki hook integration
+        # to detect when users modify cards. This is a significant architectural addition.
         QMessageBox.information(
-            self, "Coming Soon",
-            "Push changes feature requires local change tracking.\n\n"
-            "This will be available in a future update."
+            self, "Push Changes",
+            "Push changes requires local change tracking, which monitors your edits.\n\n"
+            "To enable this feature:\n"
+            "1. An admin can push changes via Settings → Admin tab\n"
+            "2. Regular users can submit suggestions instead\n\n"
+            "Use the 'Suggest Improvement' feature to propose card changes."
         )
     
     def push_selected_change(self):
         """Push selected change"""
-        QMessageBox.information(
-            self, "Coming Soon",
-            "Push changes feature requires local change tracking.\n\n"
-            "This will be available in a future update."
-        )
+        self.push_all_changes()  # Same message
     
     def resolve_selected_conflict(self):
         """Resolve the currently selected conflict"""
@@ -493,6 +654,21 @@ class SyncDialog(QDialog):
         # Get resolution choice
         resolution_id = self.resolution_group.checkedId()
         keep_local = resolution_id == 1
+        
+        # Apply the resolution
+        if not keep_local:
+            # Take server version - apply it to local card
+            server_value = conflict.get('server_value', '')
+            change_to_apply = {
+                'card_guid': conflict.get('card_guid'),
+                'field_name': conflict.get('field_name'),
+                'new_value': server_value
+            }
+            result = self._apply_single_change(change_to_apply)
+            if result != "applied":
+                QMessageBox.warning(self, "Error", f"Failed to apply server version: {result}")
+                return
+        # If keeping local, no action needed - local already has the value
         
         resolution = "local" if keep_local else "server"
         
@@ -522,11 +698,46 @@ class SyncDialog(QDialog):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
         
-        if reply == QMessageBox.StandardButton.Yes:
-            self.conflicts_list.clear()
-            self.tabs.setTabText(2, "⚠️ Conflicts (0)")
-            self.status_label.setText(f"✓ All conflicts resolved (kept {resolution})")
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        
+        # Apply resolutions
+        applied = 0
+        errors = 0
+        
+        for i in range(self.conflicts_list.count()):
+            item = self.conflicts_list.item(i)
+            conflict = item.data(Qt.ItemDataRole.UserRole)
+            if not conflict:
+                continue
             
+            if resolution == "server":
+                # Apply server version
+                change_to_apply = {
+                    'card_guid': conflict.get('card_guid'),
+                    'field_name': conflict.get('field_name'),
+                    'new_value': conflict.get('server_value', '')
+                }
+                result = self._apply_single_change(change_to_apply)
+                if result == "applied":
+                    applied += 1
+                else:
+                    errors += 1
+            else:
+                # Keep local - no action needed
+                applied += 1
+        
+        self.conflicts_list.clear()
+        self.tabs.setTabText(2, "⚠️ Conflicts (0)")
+        self.status_label.setText(f"✓ All conflicts resolved (kept {resolution})")
+        
+        if errors > 0:
+            QMessageBox.warning(
+                self, "Conflicts Resolved",
+                f"Resolved {applied} conflict(s), {errors} error(s).\n\n"
+                f"Kept {resolution} versions."
+            )
+        else:
             QMessageBox.information(
                 self, "Conflicts Resolved",
                 f"All {count} conflicts resolved by keeping {resolution} versions."

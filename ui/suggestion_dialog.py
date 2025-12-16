@@ -1,7 +1,7 @@
 """
 Card Suggestion Dialog for Nottorney Addon
 Features: Submit card improvement suggestions to deck maintainers
-Version: 1.0.0
+Version: 2.1.0
 """
 
 from aqt.qt import (
