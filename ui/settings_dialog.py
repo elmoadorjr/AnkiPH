@@ -641,8 +641,8 @@ class SettingsDialog(QDialog):
             if token:
                 set_access_token(token)
             
-            # Chunk the changes for large pushes (500 per batch)
-            CHUNK_SIZE = 500
+            # Chunk the changes for large pushes (100 per batch to avoid Edge Function timeout)
+            CHUNK_SIZE = 100
             total_cards = len(changes)
             total_pushed = 0
             total_added = 0
@@ -805,8 +805,8 @@ class SettingsDialog(QDialog):
             if token:
                 set_access_token(token)
             
-            # Chunk the cards for large imports (500 per batch)
-            CHUNK_SIZE = 500
+            # Chunk the cards for large imports (100 per batch to avoid Edge Function timeout)
+            CHUNK_SIZE = 100
             total_cards = len(cards)
             total_imported = 0
             created_deck_id = deck_id
