@@ -403,9 +403,12 @@ class SettingsDialog(QDialog):
         # Deck selector
         deck_group = QGroupBox("Select Deck to Manage")
         deck_layout = QFormLayout()
+        deck_layout.setSpacing(10)
+        deck_layout.setContentsMargins(10, 15, 10, 10)
         
         self.admin_deck_selector = QComboBox()
         self.admin_deck_selector.setMinimumWidth(300)
+        self.admin_deck_selector.setMinimumHeight(30)
         deck_layout.addRow("Anki Deck:", self.admin_deck_selector)
         
         # Create new deck option
@@ -418,11 +421,13 @@ class SettingsDialog(QDialog):
         self.admin_deck_title = QLineEdit()
         self.admin_deck_title.setPlaceholderText("Enter deck title for new deck")
         self.admin_deck_title.setEnabled(False)
+        self.admin_deck_title.setMinimumHeight(28)
         deck_layout.addRow("Deck Title:", self.admin_deck_title)
         
         # Deck ID input for existing deck
         self.admin_deck_id_input = QLineEdit()
         self.admin_deck_id_input.setPlaceholderText("Enter existing deck UUID (leave empty for new deck)")
+        self.admin_deck_id_input.setMinimumHeight(28)
         deck_layout.addRow("Existing Deck ID:", self.admin_deck_id_input)
         
         # Load decks
