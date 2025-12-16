@@ -422,13 +422,17 @@ class NottorneyTabbedDialog(QDialog):
                 access_token = result.get('access_token')
                 refresh_token = result.get('refresh_token')
                 expires_at = result.get('expires_at')
-                
+                user_data = result.get('user', {})
+            
                 if access_token:
                     config.save_tokens(access_token, refresh_token, expires_at)
+                    config.save_user_data(user_data)
                     set_access_token(access_token)
                     
+                    # Customize message based on admin status
+                    admin_note = " (Admin mode enabled)" if user_data.get('is_admin') else ""
                     QMessageBox.information(self, "Success", 
-                                          "Login successful! Reopen Nottorney to browse decks.")
+                                          f"Login successful!{admin_note}\nReopen Nottorney to browse decks.")
                     self.accept()
                 else:
                     raise Exception("No access token received")

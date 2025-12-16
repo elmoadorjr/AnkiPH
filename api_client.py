@@ -584,6 +584,82 @@ class ApiClient:
         
         return self.post("/addon-sync-note-types", json_body=body)
 
+    def pull_changes_full(self, deck_id: str) -> Any:
+        """
+        Pull full card data from collection_cards (source of truth).
+        Use for initial sync or complete re-sync.
+        
+        Args:
+            deck_id: The deck ID
+        
+        Returns:
+            {
+                "success": true,
+                "full_sync": true,
+                "cards": [
+                    {
+                        "card_guid": "abc123",
+                        "note_type": "Basic",
+                        "fields": {"Front": "...", "Back": "..."},
+                        "tags": ["tag1", "tag2"],
+                        "updated_at": "2024-12-10T15:00:00Z"
+                    }
+                ],
+                "total_cards": 500,
+                "deck_version": "2.1.0"
+            }
+        """
+        return self.post("/addon-pull-changes", json_body={"deck_id": deck_id, "full_sync": True})
+
+    # === ADMIN ENDPOINTS (NEW) ===
+    
+    def admin_push_changes(self, deck_id: str, changes: List[Dict], version: str,
+                           version_notes: Optional[str] = None) -> Any:
+        """
+        Admin: Push card changes from Anki to database as publisher changes.
+        Only available to deck publishers/admins.
+        
+        Args:
+            deck_id: The deck ID
+            changes: List of card changes (each with guid, note_type, fields, tags, change_type)
+            version: New version string for this update
+            version_notes: Optional release notes for this version
+        
+        Returns:
+            {"success": true, "cards_added": 0, "cards_modified": 50, "new_version": "2.2.0"}
+        """
+        body = {"deck_id": deck_id, "changes": changes, "version": version}
+        if version_notes:
+            body["version_notes"] = version_notes
+        return self.post("/addon-admin-push-changes", json_body=body)
+
+    def admin_import_deck(self, deck_id: str, cards: List[Dict], version: str,
+                          version_notes: Optional[str] = None,
+                          clear_existing: bool = False) -> Any:
+        """
+        Admin: Import full deck to database (initial setup or full refresh).
+        Only available to deck publishers/admins.
+        
+        Args:
+            deck_id: The deck ID to import into
+            cards: List of card data (each with card_guid, note_type, fields, tags)
+            version: Version string for this import
+            version_notes: Optional release notes for this version
+            clear_existing: If True, clears existing cards before import
+        
+        Returns:
+            {"success": true, "cards_imported": 500, "version": "1.0.0"}
+        """
+        body = {
+            "deck_id": deck_id,
+            "cards": cards,
+            "version": version,
+            "clear_existing": clear_existing
+        }
+        if version_notes:
+            body["version_notes"] = version_notes
+        return self.post("/addon-admin-import-deck", json_body=body)
+
 
 # === GLOBAL INSTANCE ===
 

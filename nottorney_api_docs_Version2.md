@@ -1,8 +1,8 @@
 # Nottorney Anki Add-on API Documentation
 
-**Version:** 2.0.0  
+**Version:** 2.1.0  
 **Base URL:** `https://ladvckxztcleljbiomcf.supabase.co/functions/v1`  
-**Last Updated:** December 11, 2025
+**Last Updated:** December 16, 2025
 
 ---
 

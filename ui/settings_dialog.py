@@ -1,14 +1,14 @@
 """
 Settings Dialog for Nottorney Addon
-Features: General settings, Protected Fields, Notification preferences
-Version: 1.0.0
+Features: General settings, Protected Fields, Sync, Admin (for admins)
+Version: 1.1.0
 """
 
 from aqt.qt import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QListWidget, QListWidgetItem, QMessageBox, Qt,
     QTabWidget, QWidget, QCheckBox, QSpinBox, QGroupBox,
-    QFormLayout, QComboBox
+    QFormLayout, QComboBox, QTextEdit, QProgressBar
 )
 from aqt import mw
 
@@ -49,6 +49,11 @@ class SettingsDialog(QDialog):
         self.tabs.addTab(self.general_tab, "🔧 General")
         self.tabs.addTab(self.protected_fields_tab, "🛡️ Protected Fields")
         self.tabs.addTab(self.sync_tab, "🔄 Sync")
+        
+        # Add Admin tab only if user is admin
+        if config.is_admin():
+            self.admin_tab = self.create_admin_tab()
+            self.tabs.addTab(self.admin_tab, "👑 Admin")
         
         layout.addWidget(self.tabs)
         
@@ -377,6 +382,328 @@ class SettingsDialog(QDialog):
             QMessageBox.critical(self, "API Error", str(e))
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to fetch: {e}")
+    
+    def create_admin_tab(self):
+        """Create Admin tab (only visible to admins)"""
+        tab = QWidget()
+        layout = QVBoxLayout()
+        
+        # Warning banner
+        warning = QLabel(
+            "⚠️ Admin Mode - Changes here affect ALL users of your decks!\n"
+            "Only use these features if you are a deck publisher."
+        )
+        warning.setStyleSheet(
+            "background-color: #fff3cd; color: #856404; "
+            "padding: 10px; border-radius: 5px; font-weight: bold;"
+        )
+        warning.setWordWrap(True)
+        layout.addWidget(warning)
+        
+        # Deck selector
+        deck_group = QGroupBox("Select Deck to Manage")
+        deck_layout = QFormLayout()
+        
+        self.admin_deck_selector = QComboBox()
+        self.admin_deck_selector.setMinimumWidth(300)
+        deck_layout.addRow("Deck:", self.admin_deck_selector)
+        
+        # Load decks
+        self.load_admin_decks()
+        
+        deck_group.setLayout(deck_layout)
+        layout.addWidget(deck_group)
+        
+        # Push Changes Section
+        push_group = QGroupBox("Push Changes to Server")
+        push_layout = QVBoxLayout()
+        
+        push_info = QLabel(
+            "Push modified cards from your Anki to the server database.\n"
+            "This will create a new version for all users to sync."
+        )
+        push_info.setStyleSheet("color: #666;")
+        push_info.setWordWrap(True)
+        push_layout.addWidget(push_info)
+        
+        version_layout = QHBoxLayout()
+        version_layout.addWidget(QLabel("New Version:"))
+        self.admin_version_input = QLineEdit()
+        self.admin_version_input.setPlaceholderText("e.g., 2.2.0")
+        version_layout.addWidget(self.admin_version_input)
+        push_layout.addLayout(version_layout)
+        
+        notes_layout = QHBoxLayout()
+        notes_layout.addWidget(QLabel("Version Notes:"))
+        self.admin_notes_input = QLineEdit()
+        self.admin_notes_input.setPlaceholderText("e.g., Updated 50 cards with new citations")
+        notes_layout.addWidget(self.admin_notes_input)
+        push_layout.addLayout(notes_layout)
+        
+        push_btn = QPushButton("🚀 Push Changes to Server")
+        push_btn.setStyleSheet(
+            "padding: 10px; font-weight: bold; "
+            "background-color: #007bff; color: white;"
+        )
+        push_btn.clicked.connect(self.admin_push_changes)
+        push_layout.addWidget(push_btn)
+        
+        push_group.setLayout(push_layout)
+        layout.addWidget(push_group)
+        
+        # Import Deck Section
+        import_group = QGroupBox("Import Full Deck to Database")
+        import_layout = QVBoxLayout()
+        
+        import_info = QLabel(
+            "One-time import of all cards from your Anki deck to the server.\n"
+            "Use this for initial setup or to completely refresh the database."
+        )
+        import_info.setStyleSheet("color: #666;")
+        import_info.setWordWrap(True)
+        import_layout.addWidget(import_info)
+        
+        self.admin_clear_existing = QCheckBox("Clear existing cards before import")
+        self.admin_clear_existing.setStyleSheet("color: #dc3545;")
+        import_layout.addWidget(self.admin_clear_existing)
+        
+        import_btn = QPushButton("📥 Import Full Deck to Database")
+        import_btn.setStyleSheet(
+            "padding: 10px; font-weight: bold; "
+            "background-color: #28a745; color: white;"
+        )
+        import_btn.clicked.connect(self.admin_import_deck)
+        import_layout.addWidget(import_btn)
+        
+        import_group.setLayout(import_layout)
+        layout.addWidget(import_group)
+        
+        # Status output
+        status_group = QGroupBox("Status")
+        status_layout = QVBoxLayout()
+        
+        self.admin_status = QTextEdit()
+        self.admin_status.setReadOnly(True)
+        self.admin_status.setMaximumHeight(100)
+        self.admin_status.setStyleSheet("font-family: monospace; font-size: 11px;")
+        status_layout.addWidget(self.admin_status)
+        
+        status_group.setLayout(status_layout)
+        layout.addWidget(status_group)
+        
+        layout.addStretch()
+        tab.setLayout(layout)
+        return tab
+    
+    def load_admin_decks(self):
+        """Load downloaded decks into admin deck selector"""
+        self.admin_deck_selector.clear()
+        self.admin_deck_selector.addItem("-- Select a deck --", None)
+        
+        downloaded_decks = config.get_downloaded_decks()
+        
+        for deck_id, deck_info in downloaded_decks.items():
+            anki_deck_id = deck_info.get('anki_deck_id')
+            deck_name = f"Deck {deck_id[:8]}"
+            
+            if anki_deck_id and mw.col:
+                try:
+                    deck = mw.col.decks.get(int(anki_deck_id))
+                    if deck:
+                        deck_name = deck['name']
+                except:
+                    pass
+            
+            version = deck_info.get('version', '?')
+            display_text = f"{deck_name} (v{version})"
+            self.admin_deck_selector.addItem(display_text, deck_id)
+    
+    def admin_log(self, message):
+        """Add message to admin status log"""
+        self.admin_status.append(message)
+    
+    def admin_push_changes(self):
+        """Push changes from Anki to server"""
+        deck_id = self.admin_deck_selector.currentData()
+        if not deck_id:
+            QMessageBox.warning(self, "No Deck Selected", "Please select a deck first.")
+            return
+        
+        version = self.admin_version_input.text().strip()
+        if not version:
+            QMessageBox.warning(self, "Version Required", "Please enter a version number.")
+            return
+        
+        version_notes = self.admin_notes_input.text().strip() or None
+        
+        # Get Anki deck
+        anki_deck_id = config.get_deck_anki_id(deck_id)
+        if not anki_deck_id or not mw.col:
+            QMessageBox.warning(self, "Deck Not Found", "Could not find the Anki deck.")
+            return
+        
+        # Confirm action
+        reply = QMessageBox.question(
+            self, "Confirm Push",
+            f"This will push all cards from this deck to the server as version {version}.\n\n"
+            "All users will receive these changes on their next sync.\n\n"
+            "Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        
+        self.admin_log(f"🔄 Collecting cards from deck...")
+        
+        try:
+            # Get all notes from this deck
+            deck_name = mw.col.decks.get(anki_deck_id)['name']
+            note_ids = mw.col.find_notes(f'"deck:{deck_name}"')
+            
+            changes = []
+            for nid in note_ids:
+                note = mw.col.get_note(nid)
+                fields = {}
+                for field_name in note.keys():
+                    fields[field_name] = note[field_name]
+                
+                changes.append({
+                    "card_guid": note.guid,
+                    "note_type": note.note_type()['name'],
+                    "fields": fields,
+                    "tags": note.tags,
+                    "change_type": "modify"
+                })
+            
+            self.admin_log(f"📦 Found {len(changes)} cards to push")
+            self.admin_log(f"🚀 Pushing to server...")
+            
+            # Set token
+            token = config.get_access_token()
+            if token:
+                set_access_token(token)
+            
+            # Make API call
+            result = api.admin_push_changes(deck_id, changes, version, version_notes)
+            
+            if result.get('success'):
+                added = result.get('cards_added', 0)
+                modified = result.get('cards_modified', 0)
+                self.admin_log(f"✅ Push successful! Added: {added}, Modified: {modified}")
+                self.admin_log(f"📌 New version: {result.get('new_version', version)}")
+                
+                # Update local version
+                config.update_deck_version(deck_id, version)
+                
+                QMessageBox.information(
+                    self, "Push Successful",
+                    f"Pushed {len(changes)} cards to server.\n\n"
+                    f"New version: {result.get('new_version', version)}"
+                )
+            else:
+                self.admin_log(f"❌ Push failed: {result.get('error', 'Unknown error')}")
+                
+        except NottorneyAPIError as e:
+            self.admin_log(f"❌ API Error: {e}")
+            QMessageBox.critical(self, "API Error", str(e))
+        except Exception as e:
+            self.admin_log(f"❌ Error: {e}")
+            QMessageBox.critical(self, "Error", f"Push failed: {e}")
+    
+    def admin_import_deck(self):
+        """Import full deck to database"""
+        deck_id = self.admin_deck_selector.currentData()
+        if not deck_id:
+            QMessageBox.warning(self, "No Deck Selected", "Please select a deck first.")
+            return
+        
+        version = self.admin_version_input.text().strip()
+        if not version:
+            QMessageBox.warning(self, "Version Required", "Please enter a version number.")
+            return
+        
+        version_notes = self.admin_notes_input.text().strip() or None
+        clear_existing = self.admin_clear_existing.isChecked()
+        
+        # Get Anki deck
+        anki_deck_id = config.get_deck_anki_id(deck_id)
+        if not anki_deck_id or not mw.col:
+            QMessageBox.warning(self, "Deck Not Found", "Could not find the Anki deck.")
+            return
+        
+        # Confirm action with extra warning for clear
+        warning_text = (
+            f"This will import ALL cards from this deck to the server database "
+            f"as version {version}.\n\n"
+        )
+        if clear_existing:
+            warning_text += "⚠️ WARNING: Existing cards will be DELETED first!\n\n"
+        warning_text += "This is typically used for initial setup. Continue?"
+        
+        reply = QMessageBox.question(
+            self, "Confirm Import",
+            warning_text,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        
+        self.admin_log(f"🔄 Collecting all cards from deck...")
+        
+        try:
+            # Get all notes from this deck
+            deck_name = mw.col.decks.get(anki_deck_id)['name']
+            note_ids = mw.col.find_notes(f'"deck:{deck_name}"')
+            
+            cards = []
+            for nid in note_ids:
+                note = mw.col.get_note(nid)
+                fields = {}
+                for field_name in note.keys():
+                    fields[field_name] = note[field_name]
+                
+                cards.append({
+                    "card_guid": note.guid,
+                    "note_type": note.note_type()['name'],
+                    "fields": fields,
+                    "tags": note.tags
+                })
+            
+            self.admin_log(f"📦 Found {len(cards)} cards to import")
+            self.admin_log(f"📥 Importing to server database...")
+            
+            # Set token
+            token = config.get_access_token()
+            if token:
+                set_access_token(token)
+            
+            # Make API call
+            result = api.admin_import_deck(deck_id, cards, version, version_notes, clear_existing)
+            
+            if result.get('success'):
+                imported = result.get('cards_imported', 0)
+                self.admin_log(f"✅ Import successful! {imported} cards imported")
+                self.admin_log(f"📌 Version: {result.get('version', version)}")
+                
+                # Update local version
+                config.update_deck_version(deck_id, version)
+                
+                QMessageBox.information(
+                    self, "Import Successful",
+                    f"Imported {imported} cards to database.\n\n"
+                    f"Version: {result.get('version', version)}"
+                )
+            else:
+                self.admin_log(f"❌ Import failed: {result.get('error', 'Unknown error')}")
+                
+        except NottorneyAPIError as e:
+            self.admin_log(f"❌ API Error: {e}")
+            QMessageBox.critical(self, "API Error", str(e))
+        except Exception as e:
+            self.admin_log(f"❌ Error: {e}")
+            QMessageBox.critical(self, "Error", f"Import failed: {e}")
     
     def save_settings(self):
         """Save all settings"""

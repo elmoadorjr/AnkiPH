@@ -79,6 +79,7 @@ class Config:
             "refresh_token": None,
             "expires_at": None,
             "user": None,
+            "is_admin": False,
             "ui_mode": "tabbed",
             "last_notification_check": None,
             "unread_notification_count": 0,
@@ -181,13 +182,39 @@ class Config:
         token = self.get_access_token()
         return bool(token)
     
+    def save_user_data(self, user_data: dict):
+        """
+        Save user data from login response
+        
+        Args:
+            user_data: Dict containing user info (id, email, full_name, is_admin)
+        """
+        cfg = self._get_config()
+        cfg['user'] = user_data
+        cfg['is_admin'] = user_data.get('is_admin', False)
+        
+        success = self._save_config(cfg)
+        if success:
+            admin_status = 'Admin' if cfg['is_admin'] else 'User'
+            print(f"✓ User data saved: {user_data.get('email')} ({admin_status})")
+        return success
+    
+    def is_admin(self) -> bool:
+        """Check if current user has admin privileges"""
+        return self._get_config().get('is_admin', False)
+    
+    def get_user(self) -> dict:
+        """Get current user data"""
+        return self._get_config().get('user', {})
+    
     def clear_tokens(self):
-        """Clear all authentication tokens"""
+        """Clear all authentication tokens and user data"""
         cfg = self._get_config()
         cfg['access_token'] = None
         cfg['refresh_token'] = None
         cfg['expires_at'] = None
         cfg['user'] = None
+        cfg['is_admin'] = False
         
         success = self._save_config(cfg)
         if success:
