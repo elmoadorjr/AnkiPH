@@ -380,7 +380,8 @@ class ApiClient:
                         json_body={"deck_id": deck_id, "changes": changes, "version": version})
 
     def pull_changes(self, deck_id: str, since: Optional[str] = None, 
-                     last_change_id: Optional[str] = None) -> Any:
+                     last_change_id: Optional[str] = None,
+                     full_sync: bool = False) -> Any:
         """
         Pull publisher changes since last sync
         
@@ -388,15 +389,17 @@ class ApiClient:
             deck_id: The deck ID
             since: ISO 8601 timestamp to pull changes after
             last_change_id: ID of last synced change
+            full_sync: If True, returns all cards from collection_cards (source of truth)
         
         Returns:
             {
                 "success": true,
-                "changes": [...],
+                "changes": [...],    # if full_sync=False
+                "cards": [...],      # if full_sync=True
                 "conflicts": [...]
             }
         """
-        body = {"deck_id": deck_id}
+        body = {"deck_id": deck_id, "full_sync": full_sync}
         if since:
             body["since"] = since
         if last_change_id:
