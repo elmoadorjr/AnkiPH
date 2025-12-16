@@ -406,7 +406,12 @@ class SettingsDialog(QDialog):
         
         self.admin_deck_selector = QComboBox()
         self.admin_deck_selector.setMinimumWidth(300)
-        deck_layout.addRow("Deck:", self.admin_deck_selector)
+        deck_layout.addRow("Anki Deck:", self.admin_deck_selector)
+        
+        # Deck ID input for server
+        self.admin_deck_id_input = QLineEdit()
+        self.admin_deck_id_input.setPlaceholderText("Enter the Nottorney deck UUID (from database)")
+        deck_layout.addRow("Server Deck ID:", self.admin_deck_id_input)
         
         # Load decks
         self.load_admin_decks()
@@ -496,27 +501,39 @@ class SettingsDialog(QDialog):
         return tab
     
     def load_admin_decks(self):
-        """Load downloaded decks into admin deck selector"""
+        """Load ALL Anki decks into admin deck selector"""
         self.admin_deck_selector.clear()
         self.admin_deck_selector.addItem("-- Select a deck --", None)
         
-        downloaded_decks = config.get_downloaded_decks()
+        if not mw.col:
+            return
         
-        for deck_id, deck_info in downloaded_decks.items():
-            anki_deck_id = deck_info.get('anki_deck_id')
-            deck_name = f"Deck {deck_id[:8]}"
+        # Get all Anki decks
+        all_decks = mw.col.decks.all_names_and_ids()
+        
+        for deck in all_decks:
+            deck_name = deck.name
+            anki_id = deck.id
             
-            if anki_deck_id and mw.col:
-                try:
-                    deck = mw.col.decks.get(int(anki_deck_id))
-                    if deck:
-                        deck_name = deck['name']
-                except:
-                    pass
+            # Skip default deck
+            if deck_name == "Default":
+                continue
             
-            version = deck_info.get('version', '?')
-            display_text = f"{deck_name} (v{version})"
-            self.admin_deck_selector.addItem(display_text, deck_id)
+            # Check if this deck is already tracked (has a Nottorney deck_id)
+            downloaded = config.get_downloaded_decks()
+            nottorney_id = None
+            for nid, info in downloaded.items():
+                if info.get('anki_deck_id') == anki_id:
+                    nottorney_id = nid
+                    break
+            
+            # Store anki_id as data since we need to look up cards by it
+            display_text = f"{deck_name}"
+            if nottorney_id:
+                display_text += f" (ID: {nottorney_id[:8]}...)"
+            
+            # Store tuple of (anki_id, nottorney_id)
+            self.admin_deck_selector.addItem(display_text, (anki_id, nottorney_id))
     
     def admin_log(self, message):
         """Add message to admin status log"""
@@ -524,9 +541,23 @@ class SettingsDialog(QDialog):
     
     def admin_push_changes(self):
         """Push changes from Anki to server"""
-        deck_id = self.admin_deck_selector.currentData()
-        if not deck_id:
+        deck_data = self.admin_deck_selector.currentData()
+        if not deck_data:
             QMessageBox.warning(self, "No Deck Selected", "Please select a deck first.")
+            return
+        
+        anki_deck_id, existing_nottorney_id = deck_data
+        
+        # Get deck_id from input or existing mapping
+        deck_id = self.admin_deck_id_input.text().strip()
+        if not deck_id and existing_nottorney_id:
+            deck_id = existing_nottorney_id
+        
+        if not deck_id:
+            QMessageBox.warning(
+                self, "Deck ID Required", 
+                "Please enter the Server Deck ID (UUID from Nottorney database)."
+            )
             return
         
         version = self.admin_version_input.text().strip()
@@ -536,16 +567,15 @@ class SettingsDialog(QDialog):
         
         version_notes = self.admin_notes_input.text().strip() or None
         
-        # Get Anki deck
-        anki_deck_id = config.get_deck_anki_id(deck_id)
-        if not anki_deck_id or not mw.col:
-            QMessageBox.warning(self, "Deck Not Found", "Could not find the Anki deck.")
+        if not mw.col:
+            QMessageBox.warning(self, "No Collection", "Anki collection not available.")
             return
         
         # Confirm action
         reply = QMessageBox.question(
             self, "Confirm Push",
             f"This will push all cards from this deck to the server as version {version}.\n\n"
+            f"Server Deck ID: {deck_id}\n\n"
             "All users will receive these changes on their next sync.\n\n"
             "Continue?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
@@ -613,9 +643,23 @@ class SettingsDialog(QDialog):
     
     def admin_import_deck(self):
         """Import full deck to database"""
-        deck_id = self.admin_deck_selector.currentData()
-        if not deck_id:
+        deck_data = self.admin_deck_selector.currentData()
+        if not deck_data:
             QMessageBox.warning(self, "No Deck Selected", "Please select a deck first.")
+            return
+        
+        anki_deck_id, existing_nottorney_id = deck_data
+        
+        # Get deck_id from input or existing mapping
+        deck_id = self.admin_deck_id_input.text().strip()
+        if not deck_id and existing_nottorney_id:
+            deck_id = existing_nottorney_id
+        
+        if not deck_id:
+            QMessageBox.warning(
+                self, "Deck ID Required", 
+                "Please enter the Server Deck ID (UUID from Nottorney database)."
+            )
             return
         
         version = self.admin_version_input.text().strip()
@@ -626,16 +670,15 @@ class SettingsDialog(QDialog):
         version_notes = self.admin_notes_input.text().strip() or None
         clear_existing = self.admin_clear_existing.isChecked()
         
-        # Get Anki deck
-        anki_deck_id = config.get_deck_anki_id(deck_id)
-        if not anki_deck_id or not mw.col:
-            QMessageBox.warning(self, "Deck Not Found", "Could not find the Anki deck.")
+        if not mw.col:
+            QMessageBox.warning(self, "No Collection", "Anki collection not available.")
             return
         
         # Confirm action with extra warning for clear
         warning_text = (
             f"This will import ALL cards from this deck to the server database "
             f"as version {version}.\n\n"
+            f"Server Deck ID: {deck_id}\n\n"
         )
         if clear_existing:
             warning_text += "⚠️ WARNING: Existing cards will be DELETED first!\n\n"
