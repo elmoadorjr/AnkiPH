@@ -618,41 +618,77 @@ class SettingsDialog(QDialog):
                 for field_name in note.keys():
                     fields[field_name] = note[field_name]
                 
+                # Get the deck path from the first card of this note
+                card_ids = note.card_ids()
+                deck_path = None
+                if card_ids:
+                    first_card = mw.col.get_card(card_ids[0])
+                    deck_path = mw.col.decks.name(first_card.did)
+                
                 changes.append({
                     "card_guid": note.guid,
                     "note_type": note.note_type()['name'],
                     "fields": fields,
                     "tags": note.tags,
-                    "change_type": "modify"
+                    "change_type": "modify",
+                    "deck_path": deck_path
                 })
             
             self.admin_log(f"📦 Found {len(changes)} cards to push")
-            self.admin_log(f"🚀 Pushing to server...")
             
             # Set token
             token = config.get_access_token()
             if token:
                 set_access_token(token)
             
-            # Make API call
-            result = api.admin_push_changes(deck_id, changes, version, version_notes)
+            # Chunk the changes for large pushes (500 per batch)
+            CHUNK_SIZE = 500
+            total_cards = len(changes)
+            total_pushed = 0
+            total_added = 0
+            total_modified = 0
             
-            if result.get('success'):
-                added = result.get('cards_added', 0)
-                modified = result.get('cards_modified', 0)
-                self.admin_log(f"✅ Push successful! Added: {added}, Modified: {modified}")
-                self.admin_log(f"📌 New version: {result.get('new_version', version)}")
+            self.admin_log(f"🚀 Pushing in {(total_cards + CHUNK_SIZE - 1) // CHUNK_SIZE} batches of {CHUNK_SIZE}...")
+            
+            for i in range(0, total_cards, CHUNK_SIZE):
+                chunk = changes[i:i + CHUNK_SIZE]
+                batch_num = (i // CHUNK_SIZE) + 1
+                total_batches = (total_cards + CHUNK_SIZE - 1) // CHUNK_SIZE
                 
-                # Update local version
-                config.update_deck_version(deck_id, version)
+                self.admin_log(f"📤 Pushing batch {batch_num}/{total_batches} ({len(chunk)} cards)...")
                 
-                QMessageBox.information(
-                    self, "Push Successful",
-                    f"Pushed {len(changes)} cards to server.\n\n"
-                    f"New version: {result.get('new_version', version)}"
-                )
-            else:
-                self.admin_log(f"❌ Push failed: {result.get('error', 'Unknown error')}")
+                # Only first batch gets version_notes
+                notes = version_notes if i == 0 else None
+                result = api.admin_push_changes(deck_id, chunk, version, notes, timeout=120)
+                
+                if result.get('success'):
+                    batch_added = result.get('cards_added', 0)
+                    batch_modified = result.get('cards_modified', 0)
+                    total_pushed += len(chunk)
+                    total_added += batch_added
+                    total_modified += batch_modified
+                    self.admin_log(f"✓ Batch {batch_num} done ({total_pushed}/{total_cards})")
+                else:
+                    self.admin_log(f"⚠ Batch {batch_num} error: {result.get('error', 'Unknown')}")
+                
+                # Process Qt events to keep UI responsive
+                from aqt.qt import QApplication
+                QApplication.processEvents()
+            
+            # Final success
+            self.admin_log(f"✅ Push complete! {total_pushed} cards pushed")
+            self.admin_log(f"📌 Added: {total_added}, Modified: {total_modified}")
+            self.admin_log(f"📌 New version: {version}")
+            
+            # Update local version
+            config.update_deck_version(deck_id, version)
+            
+            QMessageBox.information(
+                self, "Push Successful",
+                f"Pushed {total_pushed} cards to server.\n\n"
+                f"Added: {total_added}, Modified: {total_modified}\n"
+                f"New version: {version}"
+            )
                 
         except NottorneyAPIError as e:
             self.admin_log(f"❌ API Error: {e}")
@@ -747,11 +783,19 @@ class SettingsDialog(QDialog):
                 for field_name in note.keys():
                     fields[field_name] = note[field_name]
                 
+                # Get the deck path from the first card of this note
+                card_ids = note.card_ids()
+                deck_path = None
+                if card_ids:
+                    first_card = mw.col.get_card(card_ids[0])
+                    deck_path = mw.col.decks.name(first_card.did)
+                
                 cards.append({
                     "card_guid": note.guid,
                     "note_type": note.note_type()['name'],
                     "fields": fields,
-                    "tags": note.tags
+                    "tags": note.tags,
+                    "deck_path": deck_path  # e.g., "Nottorney::Political Law::Constitutional Law I"
                 })
             
             self.admin_log(f"📦 Found {len(cards)} cards to import")

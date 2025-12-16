@@ -617,7 +617,8 @@ class ApiClient:
     # === ADMIN ENDPOINTS (NEW) ===
     
     def admin_push_changes(self, deck_id: str, changes: List[Dict], version: str,
-                           version_notes: Optional[str] = None) -> Any:
+                           version_notes: Optional[str] = None,
+                           timeout: int = 60) -> Any:
         """
         Admin: Push card changes from Anki to database as publisher changes.
         Only available to deck publishers/admins.
@@ -627,6 +628,7 @@ class ApiClient:
             changes: List of card changes (each with guid, note_type, fields, tags, change_type)
             version: New version string for this update
             version_notes: Optional release notes for this version
+            timeout: Request timeout in seconds (default 60)
         
         Returns:
             {"success": true, "cards_added": 0, "cards_modified": 50, "new_version": "2.2.0"}
@@ -634,7 +636,7 @@ class ApiClient:
         body = {"deck_id": deck_id, "changes": changes, "version": version}
         if version_notes:
             body["version_notes"] = version_notes
-        return self.post("/addon-admin-push-changes", json_body=body)
+        return self.post("/addon-admin-push-changes", json_body=body, timeout=timeout)
 
     def admin_import_deck(self, deck_id: Optional[str], cards: List[Dict], version: str,
                           version_notes: Optional[str] = None,
