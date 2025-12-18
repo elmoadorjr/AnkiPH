@@ -8,7 +8,7 @@ import webbrowser
 from aqt.qt import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QListWidget, QListWidgetItem, QMessageBox, Qt,
-    QWidget, QSplitter, QFrame, QCheckBox, QSizePolicy
+    QWidget, QSplitter, QFrame, QCheckBox, QSizePolicy, QApplication
 )
 from aqt import mw
 from aqt.utils import showInfo, tooltip
@@ -17,13 +17,7 @@ from ..api_client import api, set_access_token, AnkiPHAPIError, show_upgrade_pro
 from ..config import config
 from ..deck_importer import import_deck
 from ..update_checker import update_checker
-
-# URLs
-HOMEPAGE_URL = "https://nottorney.lovable.app"
-TERMS_URL = f"{HOMEPAGE_URL}/terms"
-PRIVACY_URL = f"{HOMEPAGE_URL}/privacy"
-PLANS_URL = f"{HOMEPAGE_URL}/pricing"
-COMMUNITY_URL = f"{HOMEPAGE_URL}/community"
+from ..constants import HOMEPAGE_URL, TERMS_URL, PRIVACY_URL, PLANS_URL, COMMUNITY_URL
 
 
 class DeckManagementDialog(QDialog):
@@ -59,6 +53,21 @@ class DeckManagementDialog(QDialog):
             layout.addWidget(self._create_status_bar())
         
         self.setLayout(layout)
+    
+    def _rebuild_ui(self):
+        """Rebuild the UI (used after login to refresh in-place)"""
+        # Clear existing layout
+        if self.layout():
+            old_layout = self.layout()
+            while old_layout.count():
+                child = old_layout.takeAt(0)
+                if child.widget():
+                    child.widget().deleteLater()
+            QWidget().setLayout(old_layout)
+        
+        # Rebuild
+        self.setup_ui()
+        self.apply_styles()
     
     def _create_action_bar(self):
         """Create top action bar with Browse and Create buttons"""
@@ -571,17 +580,27 @@ class DeckManagementDialog(QDialog):
     
     def _do_install(self, deck_id, deck_name, use_recommended=True):
         """Perform the actual deck installation"""
+        # Show loading state
+        self.setCursor(Qt.CursorShape.WaitCursor)
+        self.sync_btn.setEnabled(False)
+        self.sync_btn.setText("Downloading...")
+        QApplication.processEvents()
+        
         try:
             token = config.get_access_token()
             if token:
                 set_access_token(token)
             
             result = api.download_deck(deck_id)
-            print(f"✓ download_deck response: {result}")
+            print(f"\u2713 download_deck response: {result}")
             
             if result.get('success') and result.get('download_url'):
                 download_url = result['download_url']
-                print(f"✓ Got download URL: {download_url[:80]}...")
+                print(f"\u2713 Got download URL: {download_url[:80]}...")
+                
+                # Update status
+                self.sync_btn.setText("Importing...")
+                QApplication.processEvents()
                 
                 # Download the file
                 deck_content = api.download_deck_file(download_url)
@@ -595,16 +614,24 @@ class DeckManagementDialog(QDialog):
                         self.selected_deck.get('info', {}).get('version', '1.0'),
                         anki_deck_id
                     )
-                    tooltip(f"✓ {deck_name} installed!")
+                    tooltip(f"\u2713 {deck_name} installed!")
                     self.load_decks()
+                    # Reselect to update details panel
+                    if self.selected_deck:
+                        self.on_deck_selected(self.deck_list.currentItem())
                 else:
                     raise Exception("Import failed")
             else:
                 raise Exception(result.get('message', 'No download URL'))
         
         except Exception as e:
-            print(f"✗ Install error: {e}")
+            print(f"\u2717 Install error: {e}")
             QMessageBox.critical(self, "Error", f"Install failed: {e}")
+        finally:
+            # Restore cursor and button
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            self.sync_btn.setEnabled(True)
+            self.sync_btn.setText("Sync")
     
     def open_on_web(self):
         """Open deck on web"""
@@ -640,8 +667,9 @@ class DeckManagementDialog(QDialog):
         from .login_dialog import LoginDialog
         dialog = LoginDialog(self)
         if dialog.exec():
-            QMessageBox.information(self, "Success", "Login successful! Please reopen.")
-            self.accept()
+            # Refresh UI in-place instead of requiring reopen
+            tooltip("Login successful!")
+            self._rebuild_ui()
     
     def open_settings(self):
         """Open settings dialog"""

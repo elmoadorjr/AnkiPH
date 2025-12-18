@@ -16,6 +16,7 @@ try:
     from . import sync
     from .api_client import api, set_access_token
     from .update_checker import update_checker
+    from .constants import ADDON_NAME, ADDON_VERSION
     
     # Use simplified main dialog (v3.0.0)
     from .ui.main_dialog import AnkiPHMainDialog as MainDialog
@@ -31,9 +32,6 @@ except ImportError as e:
     from aqt import gui_hooks
     gui_hooks.main_window_did_init.append(show_startup_error)
     raise
-
-ADDON_NAME = "AnkiPH"
-ADDON_VERSION = "3.1.0"
 
 
 def show_settings_dialog():

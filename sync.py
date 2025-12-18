@@ -174,17 +174,18 @@ def calculate_current_streak(deck_id: int) -> int:
         if not valid_card_ids:
             return 0
         
-        card_ids_str = ",".join(str(cid) for cid in valid_card_ids)
+        # Use parameterized query with placeholders (prevent SQL injection)
+        placeholders = ",".join("?" * len(valid_card_ids))
         
         # Get distinct review dates
         query = f"""
             SELECT DISTINCT DATE(id / 1000, 'unixepoch', 'localtime') as review_date
             FROM revlog
-            WHERE cid IN ({card_ids_str})
+            WHERE cid IN ({placeholders})
             ORDER BY review_date DESC
         """
         
-        review_dates = mw.col.db.list(query)
+        review_dates = mw.col.db.list(query, *valid_card_ids)
         
         if not review_dates:
             return 0
@@ -257,9 +258,10 @@ def get_review_stats_for_deck(deck_id: int, days: int = 30) -> dict:
         if not valid_card_ids:
             return {}
         
-        card_ids_str = ",".join(str(cid) for cid in valid_card_ids)
+        # Use parameterized query with placeholders (prevent SQL injection)
+        placeholders = ",".join("?" * len(valid_card_ids))
         
-        # Query review log
+        # Query review log with parameterized values
         query = f"""
             SELECT 
                 COUNT(*) as total_reviews,
@@ -268,11 +270,11 @@ def get_review_stats_for_deck(deck_id: int, days: int = 30) -> dict:
                 SUM(time) / 60000 as study_time_minutes,
                 MAX(id) as last_review_id
             FROM revlog
-            WHERE cid IN ({card_ids_str})
-            AND id >= {cutoff_time}
+            WHERE cid IN ({placeholders})
+            AND id >= ?
         """
         
-        result = mw.col.db.first(query)
+        result = mw.col.db.first(query, *valid_card_ids, cutoff_time)
         
         if not result:
             return {}

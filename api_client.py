@@ -12,6 +12,12 @@ from enum import Enum
 from datetime import datetime
 import webbrowser
 
+try:
+    from .constants import COLLECTION_URL, PREMIUM_URL
+except ImportError:
+    COLLECTION_URL = "https://nottorney.com/collection"
+    PREMIUM_URL = "https://nottorney.com/premium"
+
 API_BASE = "https://ladvckxztcleljbiomcf.supabase.co/functions/v1"
 
 try:
@@ -117,9 +123,9 @@ def show_upgrade_prompt():
         
         clicked = dialog.clickedButton()
         if clicked == collection_btn:
-            webbrowser.open("https://nottorney.com/collection")
+            webbrowser.open(COLLECTION_URL)
         elif clicked == subscribe_btn:
-            webbrowser.open("https://nottorney.com/premium")
+            webbrowser.open(PREMIUM_URL)
     except Exception as e:
         print(f"\u2717 Failed to show upgrade prompt: {e}")
 

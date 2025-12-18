@@ -13,11 +13,7 @@ from aqt import mw
 
 from ..api_client import api, set_access_token, AnkiPHAPIError
 from ..config import config
-
-
-# URLs for registration and password reset
-REGISTER_URL = "https://nottorney.com/register"
-FORGOT_PASSWORD_URL = "https://nottorney.com/forgot-password"
+from ..constants import REGISTER_URL, FORGOT_PASSWORD_URL
 
 
 class LoginDialog(QDialog):

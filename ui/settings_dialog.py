@@ -15,15 +15,10 @@ import webbrowser
 
 from ..api_client import api, set_access_token, AnkiPHAPIError
 from ..config import config
-
-# Constants
-ADDON_VERSION = "3.1.0"
-HOMEPAGE_URL = "https://nottorney.lovable.app"
-DOCS_URL = f"{HOMEPAGE_URL}/docs"
-HELP_URL = f"{HOMEPAGE_URL}/help"
-TERMS_URL = f"{HOMEPAGE_URL}/terms"
-PRIVACY_URL = f"{HOMEPAGE_URL}/privacy"
-CHANGELOG_URL = f"{HOMEPAGE_URL}/changelog"
+from ..constants import (
+    ADDON_VERSION, HOMEPAGE_URL, DOCS_URL, HELP_URL,
+    TERMS_URL, PRIVACY_URL, CHANGELOG_URL
+)
 
 
 def ensure_valid_token():
