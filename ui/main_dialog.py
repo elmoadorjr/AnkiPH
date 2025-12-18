@@ -454,10 +454,13 @@ class DeckManagementDialog(QDialog):
     # === DATA LOADING ===
     
     def load_decks(self):
-        """Load subscribed decks from local config"""
+        """Load subscribed decks - sync with server first, then show list"""
         self.deck_list.clear()
         
         try:
+            # First, sync subscriptions from server
+            self._sync_subscriptions_from_server()
+            
             downloaded_decks = config.get_downloaded_decks()
             
             if not downloaded_decks:
@@ -466,29 +469,79 @@ class DeckManagementDialog(QDialog):
                 self.deck_list.addItem(item)
                 return
             
+            # Import deck_exists helper
+            from ..deck_importer import deck_exists
+            
             for deck_id, deck_info in downloaded_decks.items():
                 # Get deck name from Anki
                 anki_deck_id = deck_info.get('anki_deck_id')
-                deck_name = f"Deck {deck_id[:8]}"
+                deck_name = deck_info.get('title') or f"Deck {deck_id[:8]}"
+                is_installed = False
                 
                 if anki_deck_id and mw.col:
-                    try:
-                        deck = mw.col.decks.get(int(anki_deck_id))
-                        if deck:
-                            deck_name = deck['name']
-                    except:
-                        pass
+                    # Use proper deck_exists check
+                    is_installed = deck_exists(anki_deck_id)
+                    if is_installed:
+                        try:
+                            deck = mw.col.decks.get(int(anki_deck_id))
+                            if deck:
+                                deck_name = deck['name']
+                        except:
+                            pass
                 
-                item = QListWidgetItem(deck_name)
+                # Show install status in list
+                prefix = "✓ " if is_installed else "⚠ "
+                item = QListWidgetItem(f"{prefix}{deck_name}")
                 item.setData(Qt.ItemDataRole.UserRole, {
                     'deck_id': deck_id,
                     'info': deck_info,
-                    'name': deck_name
+                    'name': deck_name,
+                    'is_installed': is_installed
                 })
                 self.deck_list.addItem(item)
         
         except Exception as e:
             print(f"Error loading decks: {e}")
+    
+    def _sync_subscriptions_from_server(self):
+        """Sync subscriptions from server to local config"""
+        if not config.is_logged_in():
+            return
+        
+        try:
+            token = config.get_access_token()
+            if token:
+                set_access_token(token)
+            
+            result = api.browse_decks(category="subscribed")
+            
+            if result.get('success') or 'decks' in result:
+                server_decks = result.get('decks', [])
+                local_decks = config.get_downloaded_decks()
+                server_deck_ids = {d.get('id') for d in server_decks}
+                
+                # Add new subscriptions from server
+                for deck in server_decks:
+                    deck_id = deck.get('id')
+                    if deck_id and deck_id not in local_decks:
+                        # New subscription from web - add to local config
+                        config.save_downloaded_deck(
+                            deck_id=deck_id,
+                            version=deck.get('version', '1.0'),
+                            anki_deck_id=None,  # Not installed yet
+                            title=deck.get('title'),
+                            card_count=deck.get('card_count')
+                        )
+                        print(f"✓ Synced subscription: {deck.get('title')}")
+                
+                # Remove local entries not on server anymore
+                for deck_id in list(local_decks.keys()):
+                    if deck_id not in server_deck_ids:
+                        config.remove_downloaded_deck(deck_id)
+                        print(f"✓ Removed unsubscribed deck: {deck_id}")
+        
+        except Exception as e:
+            print(f"⚠ Subscription sync failed (non-critical): {e}")
     
     def on_deck_selected(self, item):
         """Handle deck selection - show details in right panel"""
@@ -506,16 +559,8 @@ class DeckManagementDialog(QDialog):
         self.open_web_btn.setEnabled(True)
         self.unsubscribe_btn.setEnabled(True)
         
-        # Check install status
-        anki_deck_id = deck_info.get('anki_deck_id')
-        is_installed = False
-        
-        if anki_deck_id and mw.col:
-            try:
-                deck = mw.col.decks.get(int(anki_deck_id))
-                is_installed = deck is not None
-            except:
-                pass
+        # Use pre-computed install status from load_decks
+        is_installed = data.get('is_installed', False)
         
         # Update install status
         has_update = config.has_update_available(data.get('deck_id', ''))
@@ -537,9 +582,9 @@ class DeckManagementDialog(QDialog):
         
         # Show info
         version = deck_info.get('version', '1.0')
-        self.version_label.setText(f"Version: {version}")
+        self.version_label.setText(f"Version: v{version}")
         self.cards_label.setText(f"Cards: {deck_info.get('card_count', 'Unknown')}")
-        self.updated_label.setText(f"Downloaded: {deck_info.get('downloaded_at', 'Unknown')[:10] if deck_info.get('downloaded_at') else 'Unknown'}")
+        self.updated_label.setText(f"Downloaded: {deck_info.get('downloaded_at', 'Unknown')[:10] if deck_info.get('downloaded_at') else 'Not downloaded'}")
         self.info_container.setVisible(True)
     
     # === ACTIONS ===

@@ -371,25 +371,28 @@ class Config:
     
     # === DOWNLOADED DECKS TRACKING (PROFILE-SPECIFIC) ===
     
-    def save_downloaded_deck(self, deck_id, version, anki_deck_id):
+    def save_downloaded_deck(self, deck_id, version, anki_deck_id=None, title=None, card_count=None):
         """
         Track a downloaded deck (PROFILE-SPECIFIC)
         
         Args:
             deck_id: AnkiPH deck ID
             version: Deck version
-            anki_deck_id: Anki's internal deck ID
+            anki_deck_id: Anki's internal deck ID (optional, None if not installed)
+            title: Deck title from server (optional)
+            card_count: Number of cards (optional)
         """
         if not deck_id:
             print("✗ Cannot save deck: no deck_id provided")
             return False
         
-        # Ensure anki_deck_id is an integer
-        try:
-            anki_deck_id = int(anki_deck_id)
-        except (ValueError, TypeError) as e:
-            print(f"✗ Cannot save deck: invalid anki_deck_id '{anki_deck_id}' ({e})")
-            return False
+        # Ensure anki_deck_id is an integer if provided
+        if anki_deck_id is not None:
+            try:
+                anki_deck_id = int(anki_deck_id)
+            except (ValueError, TypeError) as e:
+                print(f"✗ Cannot save deck: invalid anki_deck_id '{anki_deck_id}' ({e})")
+                return False
         
         # Get current downloaded decks for this profile
         downloaded_decks = self._get_profile_meta('downloaded_decks', {})
@@ -397,11 +400,16 @@ class Config:
         if not isinstance(downloaded_decks, dict):
             downloaded_decks = {}
         
-        # Save deck info
+        # Preserve existing data if updating
+        existing = downloaded_decks.get(str(deck_id), {})
+        
+        # Save deck info (merge with existing)
         downloaded_decks[str(deck_id)] = {
             'version': str(version),
-            'anki_deck_id': anki_deck_id,
-            'downloaded_at': datetime.now().isoformat(),
+            'anki_deck_id': anki_deck_id if anki_deck_id is not None else existing.get('anki_deck_id'),
+            'title': title or existing.get('title'),
+            'card_count': card_count if card_count is not None else existing.get('card_count'),
+            'downloaded_at': existing.get('downloaded_at') or datetime.now().isoformat(),
             'last_synced': None
         }
         
@@ -409,7 +417,8 @@ class Config:
         success = self._set_profile_meta('downloaded_decks', downloaded_decks)
         
         if success:
-            print(f"✓ Saved deck to profile: {deck_id} v{version} (Anki ID: {anki_deck_id})")
+            install_status = f"(Anki ID: {anki_deck_id})" if anki_deck_id else "(not installed)"
+            print(f"✓ Saved deck to profile: {deck_id} v{version} {install_status}")
         else:
             print(f"✗ Failed to save deck to profile: {deck_id}")
         
