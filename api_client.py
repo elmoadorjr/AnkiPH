@@ -777,6 +777,193 @@ class ApiClient:
             body["version_notes"] = version_notes
         return self.post("/addon-admin-import-deck", json_body=body, timeout=timeout)
 
+    # === COLLABORATIVE DECK MANAGEMENT (v3.0) ===
+    
+    def create_deck(self, title: str, description: str = "", 
+                    bar_subject: Optional[str] = None, 
+                    is_public: bool = True,
+                    tags: Optional[List[str]] = None) -> Any:
+        """
+        Create a new collaborative deck (premium users only).
+        
+        Args:
+            title: Deck title (3-100 characters)
+            description: Deck description (max 2000 characters)
+            bar_subject: Optional bar subject category
+            is_public: Whether deck is publicly visible (default True)
+            tags: Optional list of tags (max 20, 50 chars each)
+        
+        Returns:
+            {
+                "success": true,
+                "deck": {
+                    "id": "uuid",
+                    "title": "My Deck",
+                    "description": "...",
+                    "bar_subject": "political_law",
+                    "is_public": true,
+                    "is_verified": false,
+                    "card_count": 0,
+                    "subscriber_count": 0,
+                    "version": "1.0.0",
+                    "created_at": "2024-12-18T10:00:00Z"
+                }
+            }
+        
+        Errors:
+            403: Premium subscription required
+            400: Title validation failed
+        """
+        body = {
+            "title": title,
+            "description": description,
+            "is_public": is_public
+        }
+        if bar_subject:
+            body["bar_subject"] = bar_subject
+        if tags:
+            body["tags"] = tags
+        
+        return self.post("/addon-create-deck", json_body=body)
+
+    def update_deck(self, deck_id: str, 
+                    title: Optional[str] = None,
+                    description: Optional[str] = None,
+                    bar_subject: Optional[str] = None,
+                    is_public: Optional[bool] = None,
+                    tags: Optional[List[str]] = None) -> Any:
+        """
+        Update metadata for a collaborative deck you created.
+        
+        Args:
+            deck_id: UUID of the deck to update
+            title: New title (optional)
+            description: New description (optional)
+            bar_subject: New bar subject category (optional)
+            is_public: Update visibility (optional)
+            tags: New tags list (optional)
+        
+        Returns:
+            {"success": true, "deck": {...}}
+        
+        Errors:
+            403: Not authorized (not deck creator)
+            404: Deck not found
+        """
+        body = {"deck_id": deck_id}
+        if title is not None:
+            body["title"] = title
+        if description is not None:
+            body["description"] = description
+        if bar_subject is not None:
+            body["bar_subject"] = bar_subject
+        if is_public is not None:
+            body["is_public"] = is_public
+        if tags is not None:
+            body["tags"] = tags
+        
+        return self.post("/addon-update-deck", json_body=body)
+
+    def delete_user_deck(self, deck_id: str, confirm: bool = False) -> Any:
+        """
+        Delete a collaborative deck you created.
+        
+        Args:
+            deck_id: UUID of the deck to delete
+            confirm: Must be True to confirm deletion
+        
+        Returns:
+            {
+                "success": true,
+                "message": "Deck deleted successfully",
+                "cards_deleted": 150,
+                "subscribers_removed": 25
+            }
+        
+        Errors:
+            400: Confirmation required (confirm=False)
+            403: Not authorized (not deck creator)
+            404: Deck not found
+        """
+        return self.post("/addon-delete-user-deck", 
+                        json_body={"deck_id": deck_id, "confirm": confirm})
+
+    def push_deck_cards(self, deck_id: str, cards: List[Dict],
+                        deleted_guids: Optional[List[str]] = None,
+                        version: Optional[str] = None,
+                        version_notes: Optional[str] = None,
+                        timeout: int = 60) -> Any:
+        """
+        Push cards from Anki Desktop to your collaborative deck.
+        
+        Args:
+            deck_id: UUID of your collaborative deck
+            cards: List of card objects (max 500 per request)
+                   Each card: {card_guid, note_type, fields, tags, subdeck_path}
+            deleted_guids: GUIDs of cards to delete
+            version: Semantic version (auto-increments if not provided)
+            version_notes: Changelog for this version
+            timeout: Request timeout in seconds (default 60)
+        
+        Returns:
+            {
+                "success": true,
+                "cards_added": 10,
+                "cards_updated": 5,
+                "cards_deleted": 2,
+                "total_cards": 157,
+                "version": "1.0.1",
+                "changes_recorded": 17,
+                "synced_at": "2024-12-18T10:30:00Z"
+            }
+        
+        Errors:
+            400: Too many cards (max 500)
+            403: Not authorized (not deck creator)
+            404: Deck not found
+        """
+        if len(cards) > 500:
+            raise ValueError("Maximum 500 cards per request (per API spec)")
+        
+        body = {"deck_id": deck_id, "cards": cards}
+        if deleted_guids:
+            body["deleted_guids"] = deleted_guids
+        if version:
+            body["version"] = version
+        if version_notes:
+            body["version_notes"] = version_notes
+        
+        return self.post("/addon-push-deck-cards", json_body=body, timeout=timeout)
+
+    def get_my_decks(self) -> Any:
+        """
+        List all collaborative decks created by the authenticated user.
+        
+        Returns:
+            {
+                "success": true,
+                "decks": [
+                    {
+                        "id": "uuid",
+                        "title": "My Constitutional Law Notes",
+                        "description": "...",
+                        "bar_subject": "political_law",
+                        "card_count": 157,
+                        "subscriber_count": 25,
+                        "is_public": true,
+                        "is_verified": false,
+                        "version": "1.0.1",
+                        "last_synced_at": "2024-12-18T10:30:00Z",
+                        "created_at": "2024-12-01T10:00:00Z"
+                    }
+                ],
+                "total_count": 3,
+                "can_create_more": true,
+                "max_decks": 10
+            }
+        """
+        return self.post("/addon-get-my-decks", json_body={})
+
 
 # === GLOBAL INSTANCE ===
 

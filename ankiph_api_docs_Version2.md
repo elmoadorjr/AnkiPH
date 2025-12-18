@@ -312,9 +312,56 @@ Set:
 
 ---
 
-## Changelog v2.1.0
+## Collaborative Deck Management (v3.0 - Premium)
 
-- `addon-pull-changes`: Returns `change_id` (was `id`), conflicts use `local_value`/`server_value`
-- All sync endpoints: Use `action` parameter (not `direction`)
-- All sync endpoints: Check collection access before individual deck purchase
-- Response format standardized: `{ "success": bool, "message": "..." }`
+Premium subscribers can create and manage their own collaborative decks.
+
+### 13. Create Deck
+**POST** `/addon-create-deck`
+
+```json
+{ "title": "My Deck (3-100 chars)", "description": "...", "is_public": true }
+```
+
+### 14. Update Deck
+**POST** `/addon-update-deck`
+
+```json
+{ "deck_id": "uuid", "title": "New Title" }
+```
+
+### 15. Delete User Deck
+**POST** `/addon-delete-user-deck`
+
+```json
+{ "deck_id": "uuid", "confirm": true }
+```
+
+### 16. Push Deck Cards
+**POST** `/addon-push-deck-cards` (max 500 cards/request)
+
+```json
+{
+  "deck_id": "uuid",
+  "cards": [{ "card_guid": "...", "note_type": "Basic", "fields": {...}, "tags": [] }],
+  "version": "1.0.1"
+}
+```
+
+### 17. Get My Decks
+**POST** `/addon-get-my-decks`
+
+Returns list of user's created decks with `can_create_more` and `max_decks`.
+
+---
+
+## Changelog
+
+### v3.0.0 (December 2024)
+- **NEW:** Collaborative deck management endpoints
+- **NEW:** `can_create_decks` in login response
+
+### v2.1.0
+- `addon-pull-changes`: Returns `change_id`, conflicts use `local_value`/`server_value`
+- All sync endpoints: Use `action` parameter
+- Response format standardized

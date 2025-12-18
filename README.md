@@ -56,6 +56,12 @@ AnkiPH is an AnkiHub-style deck syncing addon for Philippine students. It provid
 - 🔒 Push changes to database
 - 🔒 Import full decks
 
+### Premium Features (v3.0)
+- ✨ Create collaborative decks
+- ✨ Push cards to your decks (max 500/batch)
+- ✨ Manage deck metadata & visibility
+
+
 ---
 
 ## File Structure
