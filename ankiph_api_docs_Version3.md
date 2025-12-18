@@ -1,13 +1,13 @@
-# NottorneyHub Tiered Access API Documentation (v3.0)
+# AnkiPH Tiered Access API Documentation (v3.0)
 
 ## Overview
 
-NottorneyHub implements a tiered access model for the Anki addon:
+AnkiPH implements a tiered access model for the Anki addon:
 
 | Tier | Access | Price | Sync Updates |
 |------|--------|-------|--------------|
 | **Collection Owner** | ALL decks + full sync | ₱1,000 one-time | ✅ Yes |
-| **NottorneyHub Subscriber** | ALL decks + full sync | ₱149/month | ✅ Yes |
+| **AnkiPH Subscriber** | ALL decks + full sync | ₱149/month | ✅ Yes |
 | **Free Tier** | Only `is_free=true` subdecks | Free | ❌ No updates |
 | **Legacy Purchase** | Individual purchased decks only | Varies | ✅ Yes |
 
@@ -19,9 +19,14 @@ NottorneyHub implements a tiered access model for the Anki addon:
 
 **New Fields in v3.0:**
 - `owns_collection` (boolean): User has purchased the ₱1,000 collection
-- `has_subscription` (boolean): User has active NottorneyHub subscription
+- `has_subscription` (boolean): User has active AnkiPH subscription
 - `subscription_expires_at` (string|null): ISO timestamp of subscription expiry
 - `subscription_tier` (string): `"free"`, `"standard"`, or `"premium"`
+
+**New Fields in v3.1:**
+- `can_create_decks` (boolean): User can create collaborative decks
+- `created_decks_count` (int): Number of decks user has created
+- `max_decks_allowed` (int): Max decks allowed for user tier
 
 ---
 
@@ -33,7 +38,7 @@ NottorneyHub implements a tiered access model for the Anki addon:
 | Value | Description |
 |-------|-------------|
 | `collection_owner` | User owns the ₱1,000 collection |
-| `subscriber` | User has active NottorneyHub subscription |
+| `subscriber` | User has active AnkiPH subscription |
 | `free_tier` | Free subdeck (is_free=true) |
 | `legacy_purchase` | Individual deck purchase |
 
@@ -93,6 +98,6 @@ def can_sync_updates(tier: AccessTier) -> bool:
 
 | Product | Price | What You Get |
 |---------|-------|--------------|
-| **Nottorney Collection** | ₱1,000 one-time | Own all 33,709 cards forever, full sync |
-| **NottorneyHub** | ₱149/month | Access all decks, full sync, cancel anytime |
+| **AnkiPH Collection** | ₱1,000 one-time | Own all 33,709 cards forever, full sync |
+| **AnkiPH Premium** | ₱149/month | Access all decks, full sync, cancel anytime |
 | **Free Tier** | ₱0 | Access to is_free subdecks only, no updates |

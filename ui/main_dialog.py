@@ -2,7 +2,7 @@
 Simplified Main Dialog for AnkiPH Addon
 Single unified dialog with minimal UI - AnkiHub-style simplicity
 ENHANCED: Added tiered access support (v3.0)
-Version: 3.0.0
+Version: 3.1.0
 """
 
 from aqt.qt import (

@@ -1,7 +1,7 @@
 # AnkiPH Anki Addon
 
-**Version:** 3.0.0  
-**Updated:** December 17, 2025  
+**Version:** 3.1.0  
+**Updated:** December 18, 2025  
 **Compatible with:** Anki 24.x - 25.x (PyQt6)
 
 ---
@@ -56,10 +56,12 @@ AnkiPH is an AnkiHub-style deck syncing addon for Philippine students. It provid
 - 🔒 Push changes to database
 - 🔒 Import full decks
 
-### Premium Features (v3.0)
-- ✨ Create collaborative decks
-- ✨ Push cards to your decks (max 500/batch)
-- ✨ Manage deck metadata & visibility
+### Premium Features (v3.1 - Collaborative Decks)
+- ✅ Create collaborative decks (5-10 max depending on tier)
+- ✅ Push cards to your decks (max 500/batch, with change tracking)
+- ✅ Manage deck metadata, visibility & tags
+- ✅ Delete decks with cascade (cards, subscribers)
+- ✅ View created decks with creation limits
 
 
 ---
@@ -118,7 +120,14 @@ Access config via: **Tools → Add-ons → AnkiPH → Config**
 
 ## Version History
 
-### v3.0.0 (December 17, 2025) - CURRENT
+### v3.1.0 (December 18, 2025) - CURRENT
+- ✨ **Collaborative Deck Management** - Create, update, delete your own decks
+- ✨ **Push Deck Cards** - Upload up to 500 cards per batch with change tracking
+- ✨ **Deck Creation Limits** - 10 decks for Collection Owners, 5 for Subscribers
+- 🔧 Fixed `push_deck_cards()` to use `delete_missing` parameter
+- 📝 Updated API documentation with complete endpoint specs
+
+### v3.0.0 (December 17, 2025)
 - 🎨 Rebranded from Nottorney to AnkiPH
 - ✨ Added tiered access support (Collection Owner, Subscriber, Free Tier, Legacy)
 - ✨ Subscription status display in UI

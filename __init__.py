@@ -1,6 +1,6 @@
 """
 AnkiPH Anki Addon - Simplified Version
-PyQt6 Compatible - v3.0.0
+PyQt6 Compatible - v3.1.0
 SIMPLIFIED: Removed minimal UI mode, added auto-sync on startup
 """
 
@@ -33,7 +33,7 @@ except ImportError as e:
     raise
 
 ADDON_NAME = "AnkiPH"
-ADDON_VERSION = "3.0.0"
+ADDON_VERSION = "3.1.0"
 
 
 def show_settings_dialog():

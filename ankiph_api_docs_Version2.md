@@ -1,8 +1,8 @@
-# Nottorney Anki Add-on API Documentation
+# AnkiPH Anki Add-on API Documentation
 
-**Version:** 2.1.0  
+**Version:** 3.1.0  
 **Base URL:** `https://ladvckxztcleljbiomcf.supabase.co/functions/v1`  
-**Last Updated:** December 17, 2025
+**Last Updated:** December 18, 2025
 
 ---
 
@@ -56,7 +56,18 @@ Response:
   "access_token": "jwt...",
   "refresh_token": "...",
   "expires_at": "ISO8601",
-  "user": { "id": "uuid", "email": "...", "is_admin": false }
+  "user": {
+    "id": "uuid",
+    "email": "...",
+    "is_admin": false,
+    "owns_collection": false,
+    "has_subscription": true,
+    "subscription_expires_at": "ISO8601",
+    "subscription_tier": "premium",
+    "can_create_decks": true,
+    "created_decks_count": 3,
+    "max_decks_allowed": 10
+  }
 }
 ```
 
@@ -312,50 +323,169 @@ Set:
 
 ---
 
-## Collaborative Deck Management (v3.0 - Premium)
+## Collaborative Deck Management (v3.1 - Premium)
 
 Premium subscribers can create and manage their own collaborative decks.
+
+**Deck Limits:**
+| Tier | Max Decks |
+|------|-----------|
+| Collection Owner | 10 |
+| Premium Subscriber | 5 |
 
 ### 13. Create Deck
 **POST** `/addon-create-deck`
 
+Request:
 ```json
-{ "title": "My Deck (3-100 chars)", "description": "...", "is_public": true }
+{
+  "title": "My Constitutional Law Notes",
+  "description": "Personal notes for political law",
+  "bar_subject": "political_law",
+  "is_public": true,
+  "tags": ["political", "law", "consti"]
+}
+```
+
+Response:
+```json
+{
+  "success": true,
+  "deck": {
+    "id": "uuid",
+    "title": "My Constitutional Law Notes",
+    "description": "...",
+    "bar_subject": "political_law",
+    "is_public": true,
+    "is_verified": false,
+    "card_count": 0,
+    "subscriber_count": 0,
+    "version": "1.0.0",
+    "tags": ["political", "law", "consti"],
+    "created_at": "2024-12-18T10:00:00Z",
+    "updated_at": "2024-12-18T10:00:00Z"
+  }
+}
 ```
 
 ### 14. Update Deck
 **POST** `/addon-update-deck`
 
+Request:
 ```json
-{ "deck_id": "uuid", "title": "New Title" }
+{
+  "deck_id": "uuid",
+  "title": "Updated Title",
+  "description": "New description",
+  "is_public": false,
+  "tags": ["updated", "tags"]
+}
 ```
 
 ### 15. Delete User Deck
 **POST** `/addon-delete-user-deck`
 
+Request:
 ```json
 { "deck_id": "uuid", "confirm": true }
+```
+
+Response:
+```json
+{
+  "success": true,
+  "message": "Deck deleted successfully",
+  "deleted": {
+    "deck_id": "uuid",
+    "title": "Deleted Deck",
+    "cards_deleted": 150,
+    "subscribers_removed": 25
+  }
+}
 ```
 
 ### 16. Push Deck Cards
 **POST** `/addon-push-deck-cards` (max 500 cards/request)
 
+Request:
 ```json
 {
   "deck_id": "uuid",
-  "cards": [{ "card_guid": "...", "note_type": "Basic", "fields": {...}, "tags": [] }],
+  "cards": [
+    {
+      "card_guid": "anki-note-guid-123",
+      "note_type": "Basic",
+      "fields": { "Front": "Question?", "Back": "Answer." },
+      "tags": ["chapter1", "important"],
+      "subdeck_path": "Chapter 1"
+    }
+  ],
+  "delete_missing": false,
   "version": "1.0.1"
 }
 ```
 
+Response:
+```json
+{
+  "success": true,
+  "version": "1.0.1",
+  "stats": {
+    "cards_processed": 100,
+    "cards_added": 10,
+    "cards_modified": 5,
+    "cards_deleted": 0,
+    "total_cards": 157
+  }
+}
+```
+
+**Parameters:**
+| Name | Type | Description |
+|------|------|-------------|
+| `deck_id` | uuid | Required. Your deck ID |
+| `cards` | array | Required. Max 500 cards per batch |
+| `delete_missing` | bool | If true, delete cards not in list |
+| `version` | string | Optional. Auto-increments if not provided |
+
 ### 17. Get My Decks
 **POST** `/addon-get-my-decks`
 
-Returns list of user's created decks with `can_create_more` and `max_decks`.
+Response:
+```json
+{
+  "success": true,
+  "decks": [
+    {
+      "id": "uuid",
+      "title": "My Constitutional Law Notes",
+      "description": "...",
+      "bar_subject": "political_law",
+      "card_count": 157,
+      "subscriber_count": 25,
+      "is_public": true,
+      "is_verified": false,
+      "version": "1.0.1",
+      "tags": ["political", "law"],
+      "image_url": "...",
+      "created_at": "2024-12-01T10:00:00Z",
+      "updated_at": "2024-12-18T10:30:00Z"
+    }
+  ],
+  "can_create_more": true,
+  "created_decks_count": 3,
+  "max_decks": 10
+}
+```
 
 ---
 
 ## Changelog
+
+### v3.1.0 (December 2024)
+- **ENHANCED:** Push Deck Cards uses `delete_missing` parameter
+- **ENHANCED:** Login response includes deck creation fields
+- **ENHANCED:** Get My Decks returns `created_decks_count`
 
 ### v3.0.0 (December 2024)
 - **NEW:** Collaborative deck management endpoints

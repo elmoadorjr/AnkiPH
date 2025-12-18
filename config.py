@@ -3,7 +3,7 @@ Configuration management for the AnkiPH addon
 FIXED: Profile-specific deck tracking using collection metadata
 ENHANCED: Added update checking, notification tracking, and sync state management
 ENHANCED: Added tiered access support (collection owner, subscriber, free tier, legacy)
-Version: 3.0.0
+Version: 3.1.0
 """
 
 from aqt import mw
@@ -86,6 +86,10 @@ class Config:
             "has_subscription": False,
             "subscription_expires_at": None,
             "subscription_tier": "free",
+            # Collaborative deck creation fields (v3.1)
+            "can_create_decks": False,
+            "created_decks_count": 0,
+            "max_decks_allowed": 0,
             "ui_mode": "tabbed",
             "last_notification_check": None,
             "unread_notification_count": 0,
@@ -194,7 +198,8 @@ class Config:
         
         Args:
             user_data: Dict containing user info (id, email, full_name, is_admin,
-                       owns_collection, has_subscription, subscription_expires_at, subscription_tier)
+                       owns_collection, has_subscription, subscription_expires_at, subscription_tier,
+                       can_create_decks, created_decks_count, max_decks_allowed)
         """
         cfg = self._get_config()
         cfg['user'] = user_data
@@ -206,11 +211,17 @@ class Config:
         cfg['subscription_expires_at'] = user_data.get('subscription_expires_at')
         cfg['subscription_tier'] = user_data.get('subscription_tier', 'free')
         
+        # Save collaborative deck creation fields (v3.1)
+        cfg['can_create_decks'] = user_data.get('can_create_decks', False)
+        cfg['created_decks_count'] = user_data.get('created_decks_count', 0)
+        cfg['max_decks_allowed'] = user_data.get('max_decks_allowed', 0)
+        
         success = self._save_config(cfg)
         if success:
             admin_status = 'Admin' if cfg['is_admin'] else 'User'
             tier_info = self._get_tier_display()
-            print(f"✓ User data saved: {user_data.get('email')} ({admin_status}, {tier_info})")
+            deck_info = f", can_create: {cfg['can_create_decks']}" if cfg['can_create_decks'] else ""
+            print(f"✓ User data saved: {user_data.get('email')} ({admin_status}, {tier_info}{deck_info})")
         return success
     
     def _get_tier_display(self) -> str:
@@ -242,6 +253,10 @@ class Config:
         cfg['has_subscription'] = False
         cfg['subscription_expires_at'] = None
         cfg['subscription_tier'] = 'free'
+        # Clear collaborative deck creation fields (v3.1)
+        cfg['can_create_decks'] = False
+        cfg['created_decks_count'] = 0
+        cfg['max_decks_allowed'] = 0
         
         success = self._save_config(cfg)
         if success:
@@ -320,6 +335,39 @@ class Config:
             return "AnkiPH Subscriber - Active"
         
         return "Free Tier - Limited Access"
+    
+    # === COLLABORATIVE DECK CREATION (v3.1) ===
+    
+    def can_create_decks(self) -> bool:
+        """Check if user can create collaborative decks (premium feature)"""
+        return self._get_config().get('can_create_decks', False)
+    
+    def get_created_decks_count(self) -> int:
+        """Get number of collaborative decks the user has created"""
+        return self._get_config().get('created_decks_count', 0)
+    
+    def get_max_decks_allowed(self) -> int:
+        """Get maximum number of collaborative decks user can create"""
+        return self._get_config().get('max_decks_allowed', 0)
+    
+    def can_create_more_decks(self) -> bool:
+        """Check if user can create more collaborative decks (under limit)"""
+        return self.can_create_decks() and self.get_created_decks_count() < self.get_max_decks_allowed()
+    
+    def update_deck_creation_status(self, can_create: bool, created_count: int, max_allowed: int):
+        """
+        Update collaborative deck creation status.
+        
+        Args:
+            can_create: Whether user can create decks (premium)
+            created_count: Number of decks user has created
+            max_allowed: Maximum decks allowed for user tier
+        """
+        cfg = self._get_config()
+        cfg['can_create_decks'] = can_create
+        cfg['created_decks_count'] = created_count
+        cfg['max_decks_allowed'] = max_allowed
+        return self._save_config(cfg)
     
     # === DOWNLOADED DECKS TRACKING (PROFILE-SPECIFIC) ===
     

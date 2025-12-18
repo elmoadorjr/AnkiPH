@@ -1,7 +1,7 @@
 """
 Login Dialog for AnkiPH Addon
 AnkiHub-style login UI with modern dark theme
-Version: 3.0.0
+Version: 3.1.0
 """
 
 import webbrowser

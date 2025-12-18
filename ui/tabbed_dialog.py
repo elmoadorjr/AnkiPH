@@ -3,7 +3,7 @@ Modern Tabbed Dialog for AnkiPH Addon
 Features: My Decks, Browse, Updates, Notifications tabs
 FIXED: Import errors resolved, proper relative imports
 ENHANCED: Added tiered access support (v3.0)
-Version: 3.0.0
+Version: 3.1.0
 """
 
 from aqt.qt import (

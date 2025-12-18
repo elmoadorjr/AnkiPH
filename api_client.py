@@ -2,7 +2,7 @@
 Robust API client for AnkiPH Add-on
 ENHANCED: Added update checking, notifications, and AnkiHub-parity endpoints
 ENHANCED: Added tiered access support (AccessTier enum and access control)
-Version: 3.0.0
+Version: 3.1.0
 """
 
 from __future__ import annotations
@@ -889,9 +889,8 @@ class ApiClient:
                         json_body={"deck_id": deck_id, "confirm": confirm})
 
     def push_deck_cards(self, deck_id: str, cards: List[Dict],
-                        deleted_guids: Optional[List[str]] = None,
+                        delete_missing: bool = False,
                         version: Optional[str] = None,
-                        version_notes: Optional[str] = None,
                         timeout: int = 60) -> Any:
         """
         Push cards from Anki Desktop to your collaborative deck.
@@ -900,25 +899,25 @@ class ApiClient:
             deck_id: UUID of your collaborative deck
             cards: List of card objects (max 500 per request)
                    Each card: {card_guid, note_type, fields, tags, subdeck_path}
-            deleted_guids: GUIDs of cards to delete
+            delete_missing: If True, delete cards not in the provided list
             version: Semantic version (auto-increments if not provided)
-            version_notes: Changelog for this version
             timeout: Request timeout in seconds (default 60)
         
         Returns:
             {
                 "success": true,
-                "cards_added": 10,
-                "cards_updated": 5,
-                "cards_deleted": 2,
-                "total_cards": 157,
                 "version": "1.0.1",
-                "changes_recorded": 17,
-                "synced_at": "2024-12-18T10:30:00Z"
+                "stats": {
+                    "cards_processed": 100,
+                    "cards_added": 10,
+                    "cards_modified": 5,
+                    "cards_deleted": 2,
+                    "total_cards": 157
+                }
             }
         
         Errors:
-            400: Too many cards (max 500)
+            400: Too many cards (max 500) or validation errors
             403: Not authorized (not deck creator)
             404: Deck not found
         """
@@ -926,12 +925,10 @@ class ApiClient:
             raise ValueError("Maximum 500 cards per request (per API spec)")
         
         body = {"deck_id": deck_id, "cards": cards}
-        if deleted_guids:
-            body["deleted_guids"] = deleted_guids
+        if delete_missing:
+            body["delete_missing"] = True
         if version:
             body["version"] = version
-        if version_notes:
-            body["version_notes"] = version_notes
         
         return self.post("/addon-push-deck-cards", json_body=body, timeout=timeout)
 
@@ -953,12 +950,14 @@ class ApiClient:
                         "is_public": true,
                         "is_verified": false,
                         "version": "1.0.1",
-                        "last_synced_at": "2024-12-18T10:30:00Z",
-                        "created_at": "2024-12-01T10:00:00Z"
+                        "tags": ["political", "law"],
+                        "image_url": "...",
+                        "created_at": "2024-12-01T10:00:00Z",
+                        "updated_at": "2024-12-18T10:30:00Z"
                     }
                 ],
-                "total_count": 3,
                 "can_create_more": true,
+                "created_decks_count": 3,
                 "max_decks": 10
             }
         """
