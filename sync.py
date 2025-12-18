@@ -345,6 +345,58 @@ def clean_deleted_decks():
     return len(decks_to_remove)
 
 
+def clean_deleted_backend_decks():
+    """
+    Verify all tracked decks still exist on the server.
+    Removes tracking for decks that have been deleted from the backend.
+    
+    Returns:
+        Number of decks removed
+    """
+    if not config.is_logged_in():
+        return 0
+    
+    downloaded_decks = config.get_downloaded_decks()
+    if not downloaded_decks:
+        return 0
+    
+    # Set access token
+    token = config.get_access_token()
+    if not token:
+        return 0
+    
+    set_access_token(token)
+    
+    try:
+        # Get user's subscriptions from server
+        result = api.browse_decks(category="subscribed")
+        
+        if not result.get('success') and 'decks' not in result:
+            print("⚠ Could not verify decks with server")
+            return 0
+        
+        server_decks = result.get('decks', [])
+        server_deck_ids = {deck.get('id') for deck in server_decks}
+        
+        # Find decks in local config that no longer exist on server
+        decks_to_remove = []
+        for deck_id in downloaded_decks.keys():
+            if deck_id not in server_deck_ids:
+                print(f"⚠ Deck {deck_id} not found on server, marking for cleanup")
+                decks_to_remove.append(deck_id)
+        
+        # Remove stale entries
+        for deck_id in decks_to_remove:
+            config.remove_downloaded_deck(deck_id)
+            print(f"✓ Removed server-deleted deck {deck_id} from local config")
+        
+        return len(decks_to_remove)
+    
+    except Exception as e:
+        print(f"⚠ Backend deck cleanup check failed (non-critical): {e}")
+        return 0
+
+
 def sync_progress():
     """
     Sync progress for all downloaded decks to the server
@@ -367,10 +419,15 @@ def sync_progress():
     print(f"✓ Access token set for sync")
     
     try:
-        # Clean up deleted decks first
+        # Clean up deleted decks first (local Anki check)
         cleaned = clean_deleted_decks()
         if cleaned > 0:
             print(f"✓ Cleaned up {cleaned} deleted deck(s) from tracking")
+        
+        # Also clean up decks deleted from backend
+        backend_cleaned = clean_deleted_backend_decks()
+        if backend_cleaned > 0:
+            print(f"✓ Cleaned up {backend_cleaned} server-deleted deck(s) from tracking")
         
         # Get progress data
         progress_data = get_progress_data()

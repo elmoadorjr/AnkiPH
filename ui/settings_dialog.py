@@ -846,6 +846,15 @@ class SettingsDialog(QDialog):
         if not mw.col:
             return
         
+        # Clean up stale backend entries first
+        try:
+            from ..sync import clean_deleted_backend_decks
+            cleaned = clean_deleted_backend_decks()
+            if cleaned > 0:
+                print(f"✓ Cleaned {cleaned} server-deleted deck(s) from config")
+        except Exception as e:
+            print(f"⚠ Cleanup check failed: {e}")
+        
         # Get all Anki decks
         all_decks = mw.col.decks.all_names_and_ids()
         
