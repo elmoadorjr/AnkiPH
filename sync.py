@@ -1,8 +1,8 @@
 """
-Progress syncing for the AnkiPH addon - FIXED VERSION
-Syncs study progress to the server with improved error handling
-FIXED: Now properly sets access token before syncing
-Version: 2.1.0
+Progress syncing for the AnkiPH addon
+Syncs study progress to the server
+Updated for v3.0 API with improved field names and single-deck support
+Version: 3.0.0
 """
 
 from aqt import mw
@@ -60,32 +60,34 @@ def get_progress_data() -> list:
             # Calculate current streak
             current_streak = calculate_current_streak(anki_deck_id)
             
-            # Build progress data
+            # Build progress data (v3.0 format)
             progress = {
                 'deck_id': deck_id,
-                'total_cards': stats.get('total_cards', 0),
-                'total_cards_studied': review_stats.get('total_reviews', 0),
-                'new_cards_studied': review_stats.get('new_cards', 0),
-                'cards_mastered': stats.get('review_cards', 0),
-                'average_ease': review_stats.get('average_ease', 0),
-                'study_time_minutes': review_stats.get('study_time_minutes', 0),
-                'last_study_date': review_stats.get('last_study_date'),
-                'retention_rate': retention_rate,
-                'current_streak_days': current_streak,
-                'synced_at': datetime.now().isoformat()
+                'progress': {
+                    'total_cards_studied': review_stats.get('total_reviews', 0),
+                    'cards_due_today': stats.get('new_cards', 0) + stats.get('learning_cards', 0),
+                    'retention_rate': retention_rate,
+                    'study_time_minutes': review_stats.get('study_time_minutes', 0),
+                    'mature_cards': stats.get('review_cards', 0),
+                    'young_cards': stats.get('learning_cards', 0),
+                    'learning_cards': stats.get('learning_cards', 0),
+                    'avg_ease_factor': review_stats.get('average_ease', 0) / 1000 if review_stats.get('average_ease', 0) > 10 else review_stats.get('average_ease', 0),
+                    'current_streak_days': current_streak,
+                    'total_reviews_today': review_stats.get('total_reviews_today', 0)
+                }
             }
             
             progress_data.append(progress)
-            print(f"✓ Prepared progress data for deck {deck_id}")
+            print(f"OK Prepared progress data for deck {deck_id}")
             
         except Exception as e:
-            print(f"✗ Error processing deck {deck_id}: {e}")
+            print(f"X Error processing deck {deck_id}: {e}")
             continue
     
     # Clean up decks that no longer exist
     for deck_id in decks_to_remove:
         config.remove_downloaded_deck(deck_id)
-        print(f"✓ Removed non-existent deck {deck_id} from tracking")
+        print(f"OK Removed non-existent deck {deck_id} from tracking")
     
     return progress_data
 
@@ -238,7 +240,7 @@ def get_review_stats_for_deck(deck_id: int, days: int = 30) -> dict:
         days: Number of days to look back
     
     Returns:
-        Dictionary with review statistics
+        Dictionary with review statistics including total_reviews_today
     """
     try:
         if not mw.col or not deck_exists(deck_id):
@@ -246,6 +248,10 @@ def get_review_stats_for_deck(deck_id: int, days: int = 30) -> dict:
         
         # Calculate cutoff timestamp
         cutoff_time = int((datetime.now() - timedelta(days=days)).timestamp() * 1000)
+        
+        # Calculate today's cutoff (start of today)
+        today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        today_cutoff = int(today_start.timestamp() * 1000)
         
         # Get card IDs for this deck
         card_ids = mw.col.decks.cids(deck_id, children=True)
@@ -276,6 +282,15 @@ def get_review_stats_for_deck(deck_id: int, days: int = 30) -> dict:
         
         result = mw.col.db.first(query, *valid_card_ids, cutoff_time)
         
+        # Query for today's reviews
+        today_query = f"""
+            SELECT COUNT(*) as today_reviews
+            FROM revlog
+            WHERE cid IN ({placeholders})
+            AND id >= ?
+        """
+        today_result = mw.col.db.first(today_query, *valid_card_ids, today_cutoff)
+        
         if not result:
             return {}
         
@@ -285,18 +300,19 @@ def get_review_stats_for_deck(deck_id: int, days: int = 30) -> dict:
             try:
                 last_study_date = datetime.fromtimestamp(result[4] / 1000).isoformat()
             except (ValueError, OSError) as e:
-                print(f"⚠ Error converting timestamp {result[4]}: {e}")
+                print(f"Warning: Error converting timestamp {result[4]}: {e}")
         
         return {
             'total_reviews': result[0] or 0,
             'new_cards': result[1] or 0,
             'average_ease': round(result[2] or 0, 2),
             'study_time_minutes': round(result[3] or 0, 2),
-            'last_study_date': last_study_date
+            'last_study_date': last_study_date,
+            'total_reviews_today': today_result[0] if today_result else 0
         }
         
     except Exception as e:
-        print(f"✗ Error getting review stats for deck {deck_id}: {e}")
+        print(f"X Error getting review stats for deck {deck_id}: {e}")
         return {}
 
 
@@ -369,15 +385,30 @@ def sync_progress():
         
         print(f"Syncing progress for {len(progress_data)} deck(s)...")
         
-        # Sync to server
-        result = api.sync_progress(progress_data)
+        # Sync each deck individually using v3.0 format
+        success_count = 0
+        fail_count = 0
+        last_result = None
         
-        if result and result.get('success'):
-            print(f"✓ Progress synced successfully")
-        else:
-            print(f"⚠ Sync returned: {result}")
+        for deck_progress in progress_data:
+            try:
+                result = api.sync_progress(
+                    deck_id=deck_progress['deck_id'],
+                    progress=deck_progress['progress']
+                )
+                if result and result.get('success'):
+                    success_count += 1
+                    last_result = result
+                else:
+                    fail_count += 1
+                    print(f"⚠ Sync returned: {result}")
+            except Exception as e:
+                fail_count += 1
+                print(f"✗ Failed to sync deck {deck_progress.get('deck_id', 'unknown')}: {e}")
         
-        return result
+        print(f"✓ Progress synced: {success_count} succeeded, {fail_count} failed")
+        
+        return last_result or {'success': success_count > 0, 'synced_count': success_count}
     
     except AnkiPHAPIError as e:
         if e.status_code == 401:
@@ -420,6 +451,83 @@ def auto_sync_if_needed():
     
     try:
         sync_progress()
-        print("✓ Auto-sync completed")
+        print("OK Auto-sync completed")
     except Exception as e:
-        print(f"✗ Auto-sync failed (non-critical): {e}")
+        print(f"X Auto-sync failed (non-critical): {e}")
+
+
+def sync_deck_progress(deck_id: str) -> dict:
+    """
+    Sync progress for a single deck (v3.0 API format)
+    
+    Args:
+        deck_id: The deck UUID (from AnkiPH server)
+    
+    Returns:
+        API response dict
+    
+    Raises:
+        Exception: If sync fails
+    """
+    if not mw.col:
+        raise Exception("Anki collection not available. Please try again.")
+    
+    if not config.is_logged_in():
+        raise Exception("Not logged in. Please login first.")
+    
+    # Set access token
+    token = config.get_access_token()
+    if not token:
+        raise Exception("No access token found. Please login again.")
+    
+    set_access_token(token)
+    
+    # Get deck info
+    downloaded_decks = config.get_downloaded_decks()
+    deck_info = downloaded_decks.get(deck_id)
+    
+    if not deck_info:
+        raise Exception(f"Deck {deck_id} not found in downloaded decks")
+    
+    anki_deck_id = deck_info.get('anki_deck_id')
+    if not anki_deck_id or not deck_exists(anki_deck_id):
+        raise Exception(f"Anki deck not found for {deck_id}")
+    
+    # Get statistics
+    stats = get_deck_stats(anki_deck_id)
+    review_stats = get_review_stats_for_deck(anki_deck_id, days=30)
+    retention_rate = calculate_retention_rate(anki_deck_id)
+    current_streak = calculate_current_streak(anki_deck_id)
+    
+    # Build v3.0 format progress data
+    progress_data = {
+        'total_cards_studied': review_stats.get('total_reviews', 0),
+        'cards_due_today': stats.get('new_cards', 0) + stats.get('learning_cards', 0),
+        'retention_rate': retention_rate,
+        'study_time_minutes': review_stats.get('study_time_minutes', 0),
+        'mature_cards': stats.get('review_cards', 0),
+        'young_cards': stats.get('learning_cards', 0),
+        'learning_cards': stats.get('learning_cards', 0),
+        'avg_ease_factor': review_stats.get('average_ease', 0) / 1000 if review_stats.get('average_ease', 0) > 10 else review_stats.get('average_ease', 0),
+        'current_streak_days': current_streak,
+        'total_reviews_today': review_stats.get('total_reviews_today', 0)
+    }
+    
+    try:
+        # Use v3.0 single-deck format
+        result = api.post("/addon-sync-progress", json_body={
+            "deck_id": deck_id,
+            "progress": progress_data
+        })
+        
+        if result and result.get('success'):
+            print(f"OK Synced progress for deck {deck_id}")
+        
+        return result
+        
+    except AnkiPHAPIError as e:
+        if e.status_code == 401:
+            config.clear_tokens()
+            raise Exception("Session expired. Please login again.")
+        raise Exception(f"Sync failed: {str(e)}")
+

@@ -1024,7 +1024,7 @@ class AnkiPHTabbedDialog(QDialog):
         set_access_token(token)
         
         try:
-            result = api.check_notifications(mark_as_read=False, limit=20)
+            result = api.check_notifications()
             
             if not result.get('success'):
                 self.notifications_status.setText("❌ Failed to load notifications")
@@ -1149,7 +1149,7 @@ class AnkiPHTabbedDialog(QDialog):
             self.notifications_status.setText("⏳ Marking as read...")
             
             # Call API with mark_as_read=True
-            result = api.check_notifications(mark_as_read=True, limit=20)
+            result = api.check_notifications()
             
             if result.get('success'):
                 config.set_unread_notification_count(0)

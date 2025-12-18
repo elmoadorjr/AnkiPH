@@ -264,7 +264,7 @@ class UpdateChecker:
             result = api.get_changelog(deck_id)
             
             if result.get('success'):
-                return result.get('versions', [])
+                return result.get('changelog', [])
             
             return None
         

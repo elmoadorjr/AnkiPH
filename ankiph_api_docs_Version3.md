@@ -1,103 +1,638 @@
-# AnkiPH Tiered Access API Documentation (v3.0)
+# AnkiPH Addon API Documentation v3.0
 
 ## Overview
 
-AnkiPH implements a tiered access model for the Anki addon:
+This document describes the complete API interface between the AnkiPH Anki addon and the Nottorney backend. All endpoints are Supabase Edge Functions.
 
-| Tier | Access | Price | Sync Updates |
-|------|--------|-------|--------------|
-| **Collection Owner** | ALL decks + full sync | ₱1,000 one-time | ✅ Yes |
-| **AnkiPH Subscriber** | ALL decks + full sync | ₱149/month | ✅ Yes |
-| **Free Tier** | Only `is_free=true` subdecks | Free | ❌ No updates |
-| **Legacy Purchase** | Individual purchased decks only | Varies | ✅ Yes |
+**Base URL:** `https://ladvckxztcleljbiomcf.supabase.co/functions/v1`
 
----
-
-## Authentication
-
-### POST `/addon-login`
-
-**New Fields in v3.0:**
-- `owns_collection` (boolean): User has purchased the ₱1,000 collection
-- `has_subscription` (boolean): User has active AnkiPH subscription
-- `subscription_expires_at` (string|null): ISO timestamp of subscription expiry
-- `subscription_tier` (string): `"free"`, `"standard"`, or `"premium"`
-
-**New Fields in v3.1:**
-- `can_create_decks` (boolean): User can create collaborative decks
-- `created_decks_count` (int): Number of decks user has created
-- `max_decks_allowed` (int): Max decks allowed for user tier
-
----
-
-## Deck Access
-
-### POST `/addon-get-purchases`
-
-**`access_type` Values:**
-| Value | Description |
-|-------|-------------|
-| `collection_owner` | User owns the ₱1,000 collection |
-| `subscriber` | User has active AnkiPH subscription |
-| `free_tier` | Free subdeck (is_free=true) |
-| `legacy_purchase` | Individual deck purchase |
-
----
-
-## Access Control Logic
-
-```python
-class AccessTier(Enum):
-    COLLECTION_OWNER = "collection_owner"  # Full access, owns decks
-    SUBSCRIBER = "subscriber"              # Full access, subscription
-    FREE_TIER = "free_tier"                # Limited to is_free decks
-    LEGACY = "legacy_purchase"             # Individual purchases only
-
-def check_access(user_data: dict, deck: dict) -> AccessTier:
-    """Determine user's access tier for a specific deck."""
-    
-    # Tier 1: Collection owners get everything
-    if user_data.get("owns_collection"):
-        return AccessTier.COLLECTION_OWNER
-    
-    # Tier 2: Active subscribers get everything
-    if user_data.get("has_subscription"):
-        expires = user_data.get("subscription_expires_at")
-        if expires and datetime.fromisoformat(expires) > datetime.now():
-            return AccessTier.SUBSCRIBER
-    
-    # Tier 3: Free tier - only is_free subdecks
-    if deck.get("access_type") == "free_tier":
-        return AccessTier.FREE_TIER
-    
-    # Tier 4: Legacy individual purchases
-    if deck.get("access_type") == "legacy_purchase":
-        return AccessTier.LEGACY
-    
-    return None  # No access
-
-def can_sync_updates(tier: AccessTier) -> bool:
-    """Free tier users cannot sync updates."""
-    return tier in [AccessTier.COLLECTION_OWNER, AccessTier.SUBSCRIBER, AccessTier.LEGACY]
+**Authentication:** All endpoints (except `addon-login`) require a Bearer token in the Authorization header:
+```
+Authorization: Bearer <access_token>
 ```
 
 ---
 
-## Error Codes
+## Table of Contents
 
-| HTTP | Code | Description |
-|------|------|-------------|
-| 401 | `UNAUTHORIZED` | Invalid or expired token |
-| 403 | `NO_ACCESS` | User doesn't have access to this deck |
-| 403 | `SUBSCRIPTION_EXPIRED` | Subscription has expired |
-| 429 | `RATE_LIMITED` | Too many requests |
+1. [Authentication](#1-authentication)
+2. [Deck Browsing & Discovery](#2-deck-browsing--discovery)
+3. [Deck Subscription Management](#3-deck-subscription-management)
+4. [Deck Download & Sync](#4-deck-download--sync)
+5. [Card Sync & Changes](#5-card-sync--changes)
+6. [User Deck Creation (Premium)](#6-user-deck-creation-premium)
+7. [Suggestions & Collaboration](#7-suggestions--collaboration)
+8. [Media & Note Types](#8-media--note-types)
+9. [Progress & Tags Sync](#9-progress--tags-sync)
+10. [Notifications](#10-notifications)
+11. [Data Models](#11-data-models)
+12. [Error Handling](#12-error-handling)
 
 ---
 
-## Pricing Summary
+## 1. Authentication
 
-| Product | Price | What You Get |
-|---------|-------|--------------|
-| **AnkiPH Collection** | ₱1,000 one-time | Own all 33,709 cards forever, full sync |
-| **AnkiPH Premium** | ₱149/month | Access all decks, full sync, cancel anytime |
-| **Free Tier** | ₱0 | Access to is_free subdecks only, no updates |
+### POST `/addon-login`
+
+Authenticates user and returns access token with user capabilities.
+
+**Request:**
+```json
+{
+  "email": "user@example.com",
+  "password": "userpassword"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "access_token": "eyJhbGciOiJIUzI1NiIs...",
+  "refresh_token": "refresh_token_here",
+  "user": {
+    "id": "uuid",
+    "email": "user@example.com",
+    "full_name": "John Doe",
+    "is_admin": false
+  },
+  "access": {
+    "owns_collection": true,
+    "has_active_subscription": true,
+    "has_full_access": true,
+    "subscription_expires_at": "2025-02-01T00:00:00Z",
+    "can_create_decks": true,
+    "created_decks_count": 2,
+    "max_decks_allowed": 10
+  },
+  "subscribed_decks": [
+    {
+      "deck_id": "uuid",
+      "title": "Nottorney Collection",
+      "version": "1.0.0",
+      "last_synced_at": "2025-01-15T10:00:00Z"
+    }
+  ]
+}
+```
+
+### POST `/addon-refresh-token`
+
+Refreshes an expired access token.
+
+**Request:**
+```json
+{
+  "refresh_token": "refresh_token_here"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "access_token": "new_access_token",
+  "refresh_token": "new_refresh_token"
+}
+```
+
+---
+
+## 2. Deck Browsing & Discovery
+
+### POST `/addon-browse-decks`
+
+Browse available decks with filtering options.
+
+**Request:**
+```json
+{
+  "category": "all",
+  "search": "constitutional",
+  "page": 1,
+  "limit": 20
+}
+```
+
+**Parameters:**
+- `category`: `"all"` | `"featured"` | `"community"` | `"subscribed"`
+- `search`: Optional search term
+- `page`: Page number (default: 1)
+- `limit`: Results per page (default: 20, max: 100)
+
+**Response:**
+```json
+{
+  "success": true,
+  "decks": [
+    {
+      "id": "uuid",
+      "title": "Nottorney Collection",
+      "description": "Complete Philippine Bar Exam preparation deck",
+      "card_count": 33709,
+      "subscriber_count": 150,
+      "is_featured": true,
+      "is_verified": true,
+      "is_public": true,
+      "bar_subject": "political_law",
+      "version": "1.0.0",
+      "image_url": "https://...",
+      "creator": {
+        "id": "uuid",
+        "full_name": "Nottorney",
+        "is_verified": true
+      },
+      "is_subscribed": true,
+      "updated_at": "2025-01-15T10:00:00Z"
+    }
+  ],
+  "total": 45,
+  "page": 1,
+  "total_pages": 3
+}
+```
+
+---
+
+## 3. Deck Subscription Management
+
+### POST `/addon-manage-subscription`
+
+Manage deck subscriptions (subscribe, unsubscribe, update settings, get status).
+
+#### Subscribe to a Deck
+
+**Request:**
+```json
+{
+  "action": "subscribe",
+  "deck_id": "uuid",
+  "sync_enabled": true,
+  "notify_updates": true
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "subscribed": true,
+  "message": "Successfully subscribed to Nottorney Collection"
+}
+```
+
+#### Unsubscribe from a Deck
+
+**Request:**
+```json
+{
+  "action": "unsubscribe",
+  "deck_id": "uuid"
+}
+```
+
+#### Update Subscription Settings
+
+**Request:**
+```json
+{
+  "action": "update",
+  "deck_id": "uuid",
+  "sync_enabled": true,
+  "notify_updates": false
+}
+```
+
+#### Get Subscription Status
+
+**Request:**
+```json
+{
+  "action": "get",
+  "deck_id": "uuid"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "subscription": {
+    "id": "uuid",
+    "deck_id": "uuid",
+    "user_id": "uuid",
+    "sync_enabled": true,
+    "notify_updates": true,
+    "last_synced_at": "2025-01-15T10:00:00Z",
+    "subscribed_at": "2025-01-01T00:00:00Z"
+  },
+  "deck": {
+    "id": "uuid",
+    "title": "Nottorney Collection",
+    "subscriber_count": 150
+  },
+  "access": {
+    "owns_collection": true,
+    "has_subscription": true,
+    "has_full_access": true,
+    "can_subscribe": true
+  }
+}
+```
+
+---
+
+## 4. Deck Download & Sync
+
+### POST `/addon-download-deck`
+
+Download full deck content. Auto-subscribes user if not already subscribed.
+
+**Request:**
+```json
+{
+  "deck_id": "uuid",
+  "include_media": true
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "deck": {
+    "id": "uuid",
+    "title": "Nottorney Collection",
+    "description": "...",
+    "version": "1.0.0",
+    "card_count": 33709
+  },
+  "cards": [
+    {
+      "card_guid": "abc123",
+      "note_type": "Basic",
+      "fields": {
+        "Front": "What is due process?",
+        "Back": "Due process is..."
+      },
+      "tags": ["constitutional", "bill-of-rights"],
+      "subdeck_path": "Political Law::Constitutional Law I"
+    }
+  ],
+  "note_types": [
+    {
+      "name": "Basic",
+      "note_type_id": "1234567890",
+      "fields": ["Front", "Back"],
+      "templates": [],
+      "css": "..."
+    }
+  ],
+  "media_files": [
+    {
+      "file_name": "image.png",
+      "file_hash": "abc123...",
+      "download_url": "https://..."
+    }
+  ],
+  "subscribed": true
+}
+```
+
+### POST `/addon-check-updates`
+
+Check if deck has updates since last sync.
+
+**Request:**
+```json
+{
+  "deck_id": "uuid",
+  "current_version": "1.0.0",
+  "last_sync_timestamp": "2025-01-15T10:00:00Z"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "has_updates": true,
+  "latest_version": "1.0.1",
+  "changes_count": 25,
+  "change_summary": {
+    "cards_added": 10,
+    "cards_modified": 12,
+    "cards_deleted": 3
+  }
+}
+```
+
+---
+
+## 5. Card Sync & Changes
+
+### POST `/addon-pull-changes`
+
+Pull card changes since last sync (incremental sync).
+
+**Request:**
+```json
+{
+  "deck_id": "uuid",
+  "last_change_id": "uuid",
+  "full_sync": false
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "changes": [
+    {
+      "change_id": "uuid",
+      "card_guid": "abc123",
+      "change_type": "modify",
+      "field_name": "Back",
+      "old_value": "Old answer",
+      "new_value": "Updated answer",
+      "version": "1.0.1",
+      "created_at": "2025-01-15T10:00:00Z"
+    }
+  ],
+  "cards_updated": 15,
+  "latest_change_id": "uuid",
+  "deck_version": "1.0.1"
+}
+```
+
+### POST `/addon-push-changes` (User Suggestions)
+
+Push user's local changes as suggestions for review.
+
+**Request:**
+```json
+{
+  "deck_id": "uuid",
+  "changes": [
+    {
+      "card_guid": "abc123",
+      "field_name": "Back",
+      "old_value": "Current value",
+      "new_value": "Suggested improvement",
+      "reason": "Added citation to SC ruling"
+    }
+  ]
+}
+```
+
+### POST `/addon-admin-push-changes` (Admin Only)
+
+Push authoritative changes to deck (admin/deck owner only).
+
+**Request:**
+```json
+{
+  "deck_id": "uuid",
+  "changes": [
+    {
+      "card_guid": "abc123",
+      "field_name": "Back",
+      "old_value": "Old value",
+      "new_value": "New authoritative value"
+    }
+  ],
+  "version": "1.0.1",
+  "version_notes": "Updated constitutional law cards"
+}
+```
+
+---
+
+## 6. User Deck Creation (Premium)
+
+### POST `/addon-create-deck`
+
+Create a new collaborative deck (premium users only).
+
+**Request:**
+```json
+{
+  "title": "My Criminal Law Deck",
+  "description": "Personal notes on Criminal Law",
+  "bar_subject": "criminal_law",
+  "is_public": true,
+  "tags": ["criminal", "reviewer"]
+}
+```
+
+### POST `/addon-update-deck`
+
+Update deck metadata.
+
+**Request:**
+```json
+{
+  "deck_id": "uuid",
+  "title": "Updated Title",
+  "description": "Updated description",
+  "is_public": true
+}
+```
+
+### POST `/addon-delete-user-deck`
+
+Delete a user-created deck.
+
+**Request:**
+```json
+{
+  "deck_id": "uuid",
+  "confirm": true
+}
+```
+
+### POST `/addon-push-deck-cards`
+
+Push cards to a user-created deck.
+
+**Request:**
+```json
+{
+  "deck_id": "uuid",
+  "cards": [
+    {
+      "card_guid": "local-guid-123",
+      "note_type": "Basic",
+      "fields": {
+        "Front": "Question",
+        "Back": "Answer"
+      },
+      "tags": ["tag1", "tag2"],
+      "subdeck_path": "My Deck::Subtopic"
+    }
+  ],
+  "deleted_guids": ["guid-to-delete-1"],
+  "delete_missing": false,
+  "version": "1.0.1"
+}
+```
+
+### POST `/addon-get-my-decks`
+
+Get list of user's created decks.
+
+---
+
+## 7. Suggestions & Collaboration
+
+### POST `/addon-submit-suggestion`
+
+Submit a card improvement suggestion.
+
+### POST `/addon-get-protected-fields`
+
+Get user's protected fields (fields that won't be overwritten during sync).
+
+### POST `/addon-get-card-history`
+
+Get version history for a specific card.
+
+### POST `/addon-rollback-card`
+
+Rollback a card to a previous version.
+
+---
+
+## 8. Media & Note Types
+
+### POST `/addon-sync-media`
+
+Sync media files for a deck.
+
+### POST `/addon-sync-note-types`
+
+Sync note type definitions.
+
+---
+
+## 9. Progress & Tags Sync
+
+### POST `/addon-sync-progress`
+
+Sync study progress (for leaderboard integration).
+
+**Request:**
+```json
+{
+  "deck_id": "uuid",
+  "progress": {
+    "total_cards_studied": 500,
+    "cards_due_today": 25,
+    "retention_rate": 92.5,
+    "study_time_minutes": 45,
+    "mature_cards": 300,
+    "young_cards": 150,
+    "learning_cards": 50,
+    "avg_ease_factor": 2.5,
+    "current_streak_days": 7,
+    "total_reviews_today": 100
+  }
+}
+```
+
+### POST `/addon-sync-tags`
+
+Sync card tags.
+
+### POST `/addon-sync-suspend-state`
+
+Sync card suspend/bury states.
+
+---
+
+## 10. Notifications
+
+### POST `/addon-check-notifications`
+
+Check for pending notifications.
+
+### POST `/addon-get-changelog`
+
+Get deck changelog/version history.
+
+**Request:**
+```json
+{
+  "deck_id": "uuid",
+  "from_version": "1.0.0"
+}
+```
+
+---
+
+## 11. Data Models
+
+### Card Object
+```json
+{
+  "card_guid": "string (unique identifier from Anki)",
+  "note_type": "string (note type name)",
+  "fields": {
+    "FieldName": "Field content (HTML allowed)"
+  },
+  "tags": ["array", "of", "tags"],
+  "subdeck_path": "Parent::Child::Grandchild"
+}
+```
+
+### Deck Object
+```json
+{
+  "id": "uuid",
+  "title": "string",
+  "description": "string",
+  "creator_id": "uuid",
+  "card_count": 0,
+  "subscriber_count": 0,
+  "is_featured": false,
+  "is_verified": false,
+  "is_public": true,
+  "bar_subject": "political_law | criminal_law | civil_law | labor_law | mercantile_taxation | remedial_law",
+  "version": "1.0.0"
+}
+```
+
+---
+
+## 12. Error Handling
+
+All endpoints return consistent error responses:
+
+```json
+{
+  "success": false,
+  "error": "Error message describing the issue",
+  "code": "ERROR_CODE"
+}
+```
+
+### Common Error Codes
+
+| Code | HTTP Status | Description |
+|------|-------------|-------------|
+| `UNAUTHORIZED` | 401 | Missing or invalid authorization token |
+| `FORBIDDEN` | 403 | User lacks permission for this action |
+| `NOT_FOUND` | 404 | Resource not found |
+| `VALIDATION_ERROR` | 400 | Invalid request parameters |
+| `RATE_LIMITED` | 429 | Too many requests |
+| `SUBSCRIPTION_REQUIRED` | 403 | Premium subscription required |
+| `DECK_LIMIT_REACHED` | 403 | User has reached max deck creation limit |
+
+---
+
+## Version History
+
+- **v3.0.0** (2025-01): Unified collaborative deck system, premium deck creation
+- **v2.1.0** (2024-12): Standardized API responses, conflict handling
+- **v2.0.0** (2024-11): Initial AnkiHub-parity implementation

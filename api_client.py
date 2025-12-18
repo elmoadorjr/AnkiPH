@@ -2,7 +2,8 @@
 Robust API client for AnkiPH Add-on
 ENHANCED: Added update checking, notifications, and AnkiHub-parity endpoints
 ENHANCED: Added tiered access support (AccessTier enum and access control)
-Version: 3.1.0
+ENHANCED: Added subscription management and v3.0 API alignment
+Version: 3.2.0
 """
 
 from __future__ import annotations
@@ -279,29 +280,60 @@ class ApiClient:
         """Get user's purchased decks"""
         return self.post("/addon-get-purchases")
 
-    def browse_decks(self, subject: Optional[str] = None, search: Optional[str] = None) -> Any:
+    def browse_decks(self, category: str = "all", search: Optional[str] = None,
+                     page: int = 1, limit: int = 20) -> Any:
         """
-        Browse available decks
+        Browse available decks (v3.0 format)
         
         Args:
-            subject: Optional subject filter
-            search: Optional search query
+            category: "all" | "featured" | "community" | "subscribed"
+            search: Optional search term
+            page: Page number (default: 1)
+            limit: Results per page (default: 20, max: 100)
         
         Returns:
-            API response with decks list
+            {
+                "success": true,
+                "decks": [...],
+                "total": 45,
+                "page": 1,
+                "total_pages": 3
+            }
         """
-        json_body = {"action": "list"}
+        json_body = {
+            "category": category,
+            "page": page,
+            "limit": min(limit, 100)
+        }
         
-        if subject:
-            json_body["subject"] = subject
         if search:
             json_body["search"] = search
         
         return self.post("/addon-browse-decks", json_body=json_body)
 
-    def download_deck(self, deck_id: str) -> Any:
-        """Get download URL for a deck"""
-        return self.post("/addon-download-deck", json_body={"deck_id": deck_id})
+    def download_deck(self, deck_id: str, include_media: bool = True) -> Any:
+        """
+        Download full deck content (v3.0 format).
+        Auto-subscribes user if not already subscribed.
+        
+        Args:
+            deck_id: The deck UUID
+            include_media: Whether to include media files (default: True)
+        
+        Returns:
+            {
+                "success": true,
+                "deck": {...},
+                "cards": [...],
+                "note_types": [...],
+                "media_files": [...],
+                "subscribed": true
+            }
+        """
+        return self.post("/addon-download-deck", json_body={
+            "deck_id": deck_id,
+            "include_media": include_media
+        })
 
     def batch_download_decks(self, deck_ids: List[str]) -> Any:
         """
@@ -429,80 +461,196 @@ class ApiClient:
         """
         return self.post("/addon-check-updates")
 
-    def get_changelog(self, deck_id: str) -> Any:
+    def check_deck_updates(self, deck_id: str, current_version: str,
+                          last_sync_timestamp: Optional[str] = None) -> Any:
         """
-        Get full changelog/version history for a deck
+        Check if a specific deck has updates since last sync (v3.0 format)
         
         Args:
-            deck_id: The deck ID
+            deck_id: The deck UUID
+            current_version: Current local version (e.g., "1.0.0")
+            last_sync_timestamp: ISO 8601 timestamp of last sync
         
         Returns:
             {
                 "success": true,
-                "versions": [
+                "has_updates": true,
+                "latest_version": "1.0.1",
+                "changes_count": 25,
+                "change_summary": {
+                    "cards_added": 10,
+                    "cards_modified": 12,
+                    "cards_deleted": 3
+                }
+            }
+        """
+        json_body = {
+            "deck_id": deck_id,
+            "current_version": current_version
+        }
+        if last_sync_timestamp:
+            json_body["last_sync_timestamp"] = last_sync_timestamp
+        
+        return self.post("/addon-check-updates", json_body=json_body)
+
+    # === SUBSCRIPTION MANAGEMENT (v3.0) ===
+    
+    def manage_subscription(self, action: str, deck_id: str,
+                           sync_enabled: bool = True,
+                           notify_updates: bool = True) -> Any:
+        """
+        Manage deck subscriptions (subscribe, unsubscribe, update settings, get status)
+        
+        Args:
+            action: "subscribe" | "unsubscribe" | "update" | "get"
+            deck_id: The deck UUID
+            sync_enabled: Enable sync for this deck (default: True)
+            notify_updates: Receive update notifications (default: True)
+        
+        Returns:
+            For subscribe/unsubscribe:
+                {"success": true, "subscribed": true/false, "message": "..."}
+            
+            For update:
+                {"success": true}
+            
+            For get:
+                {
+                    "success": true,
+                    "subscription": {
+                        "id": "uuid",
+                        "deck_id": "uuid",
+                        "user_id": "uuid",
+                        "sync_enabled": true,
+                        "notify_updates": true,
+                        "last_synced_at": "2025-01-15T10:00:00Z",
+                        "subscribed_at": "2025-01-01T00:00:00Z"
+                    },
+                    "deck": {...},
+                    "access": {...}
+                }
+        
+        Access Rules:
+            - Featured decks (is_featured: true): Free for all users
+            - Other decks: Requires has_full_access (collection owner OR premium)
+        """
+        json_body = {
+            "action": action,
+            "deck_id": deck_id
+        }
+        
+        if action in ("subscribe", "update"):
+            json_body["sync_enabled"] = sync_enabled
+            json_body["notify_updates"] = notify_updates
+        
+        return self.post("/addon-manage-subscription", json_body=json_body)
+
+    def get_changelog(self, deck_id: str, from_version: Optional[str] = None) -> Any:
+        """
+        Get changelog/version history for a deck (v3.0 format)
+        
+        Args:
+            deck_id: The deck ID
+            from_version: Optional version to get changes after
+        
+        Returns:
+            {
+                "success": true,
+                "changelog": [
                     {
-                        "version": "1.2.0",
-                        "released_at": "2024-12-10T10:00:00Z",
-                        "changes": ["Added 50 new cards", "Fixed typos"]
+                        "version": "1.0.1",
+                        "notes": "Updated constitutional law cards",
+                        "cards_added": 10,
+                        "cards_modified": 15,
+                        "cards_deleted": 2,
+                        "released_at": "2025-01-15T10:00:00Z"
                     }
                 ]
             }
         """
-        return self.post("/addon-get-changelog", json_body={"deck_id": deck_id})
+        json_body = {"deck_id": deck_id}
+        if from_version:
+            json_body["from_version"] = from_version
+        return self.post("/addon-get-changelog", json_body=json_body)
 
-    # === NOTIFICATIONS (NEW) ===
-    
-    def check_notifications(self, mark_as_read: bool = False, limit: int = 10) -> Any:
+    def check_notifications(self, last_check: Optional[str] = None) -> Any:
         """
-        Check for user notifications
+        Check for pending notifications (v3.0 format)
         
         Args:
-            mark_as_read: Whether to mark notifications as read
-            limit: Maximum number of notifications to return
+            last_check: ISO 8601 timestamp of last check
         
         Returns:
             {
                 "success": true,
                 "notifications": [
                     {
-                        "id": "notif123",
+                        "id": "uuid",
                         "type": "deck_update",
-                        "title": "Update Available",
-                        "message": "Criminal Law v1.5.0 is now available",
-                        "created_at": "2024-12-15T08:00:00Z",
-                        "read": false
+                        "title": "Deck Updated",
+                        "message": "Nottorney Collection has been updated to v1.0.1",
+                        "deck_id": "uuid",
+                        "created_at": "2025-01-15T10:00:00Z"
                     }
-                ],
-                "unread_count": 3
+                ]
             }
         """
-        return self.post(
-            "/addon-check-notifications", 
-            json_body={"mark_as_read": mark_as_read, "limit": limit}
-        )
+        json_body = {}
+        if last_check:
+            json_body["last_check"] = last_check
+        return self.post("/addon-check-notifications", json_body=json_body)
 
     # === PROGRESS & SYNC ENDPOINTS ===
     
-    def sync_progress(self, progress_data: List[Dict] = None) -> Any:
-        """Sync study progress to server"""
-        return self.post("/addon-sync-progress", json_body={"progress_data": progress_data or []})
+    def sync_progress(self, deck_id: str = None, progress: Dict = None,
+                      progress_data: List[Dict] = None) -> Any:
+        """
+        Sync study progress to server (v3.0 format)
+        
+        Can be called in two modes:
+        1. Single deck: deck_id + progress dict
+        2. Batch: progress_data list (legacy support)
+        
+        Args:
+            deck_id: The deck UUID (for single-deck sync)
+            progress: Progress data dict (for single-deck sync)
+            progress_data: List of progress entries (for batch sync, legacy)
+        
+        Returns:
+            {"success": true, "synced_at": "...", "leaderboard_updated": true}
+        """
+        if deck_id and progress:
+            # v3.0 single-deck format
+            return self.post("/addon-sync-progress", json_body={
+                "deck_id": deck_id,
+                "progress": progress
+            })
+        else:
+            # Legacy batch format
+            return self.post("/addon-sync-progress", json_body={
+                "progress_data": progress_data or []
+            })
 
     # === ANKIHUB-PARITY: COLLABORATIVE FEATURES (NEW) ===
     
-    def push_changes(self, deck_id: str, changes: List[Dict], version: str) -> Any:
+    def push_changes(self, deck_id: str, changes: List[Dict]) -> Any:
         """
-        Push local card edits to server
+        Push user's local changes as suggestions for review (v3.0 format).
         
         Args:
-            deck_id: The deck ID
-            changes: List of card changes
-            version: Current deck version
+            deck_id: The deck UUID
+            changes: List of card changes, each with:
+                     - card_guid: The card's GUID
+                     - field_name: Name of the field changed
+                     - old_value: Current field value
+                     - new_value: Suggested new value
+                     - reason: Optional reason for the change
         
         Returns:
-            {"success": true, "changes_accepted": 5}
+            {"success": true, "changes_saved": 1, "message": "Changes submitted for review"}
         """
         return self.post("/addon-push-changes", 
-                        json_body={"deck_id": deck_id, "changes": changes, "version": version})
+                        json_body={"deck_id": deck_id, "changes": changes})
 
     def pull_changes(self, deck_id: str, since: Optional[str] = None, 
                      last_change_id: Optional[str] = None,
@@ -558,35 +706,26 @@ class ApiClient:
             "reason": reason
         })
 
-    def get_protected_fields(self, deck_id: Optional[str] = None) -> Any:
+    def get_protected_fields(self, deck_id: str) -> Any:
         """
-        Get fields protected from sync overwrites
+        Get user's protected fields (v3.0 format)
+        Fields that won't be overwritten during sync.
         
         Args:
-            deck_id: Optional deck ID to get specific deck's protected fields
+            deck_id: The deck UUID
         
         Returns:
             {
                 "success": true,
-                "protected_fields": ["Personal Notes", "My Tags"]
+                "protected_fields": [
+                    {
+                        "card_guid": "abc123",
+                        "field_names": ["Extra", "Personal Notes"]
+                    }
+                ]
             }
         """
-        body = {"deck_id": deck_id} if deck_id else {}
-        return self.post("/addon-protected-fields", json_body=body)
-
-    def set_protected_fields(self, deck_id: str, field_names: List[str]) -> Any:
-        """
-        Set which fields should be protected from sync overwrites
-        
-        Args:
-            deck_id: The deck ID
-            field_names: List of field names to protect
-        
-        Returns:
-            {"success": true}
-        """
-        return self.post("/addon-protected-fields", 
-                        json_body={"deck_id": deck_id, "fields": field_names})
+        return self.post("/addon-get-protected-fields", json_body={"deck_id": deck_id})
 
     def get_card_history(self, deck_id: str, card_guid: str, limit: int = 50) -> Any:
         """
@@ -634,64 +773,71 @@ class ApiClient:
 
     # === DATA SYNC (NEW) ===
     
-    def sync_tags(self, deck_id: str, action: str, changes: Optional[List] = None, 
-                  since: Optional[str] = None) -> Any:
+    def sync_tags(self, deck_id: str, tags: List[Dict]) -> Any:
         """
-        Sync tags bidirectionally
+        Sync card tags (v3.0 format)
         
         Args:
-            deck_id: The deck ID
-            action: 'push' or 'pull'
-            changes: List of tag changes (for push)
-            since: Timestamp to pull changes after (for pull)
+            deck_id: The deck UUID
+            tags: List of tag entries
+                  [{"card_guid": "abc123", "tags": ["tag1", "tag2"]}]
         
         Returns:
-            {"success": true, "tags_synced": 10}
+            {"success": true}
         """
-        body = {"deck_id": deck_id, "action": action}
-        if changes:
-            body["changes"] = changes
-        if since:
-            body["since"] = since
-        
-        return self.post("/addon-sync-tags", json_body=body)
+        return self.post("/addon-sync-tags", json_body={
+            "deck_id": deck_id,
+            "tags": tags
+        })
 
-    def sync_suspend_state(self, deck_id: str, action: str, changes: Optional[List] = None,
-                           since: Optional[str] = None) -> Any:
+    def sync_suspend_state(self, deck_id: str, states: List[Dict]) -> Any:
         """
-        Sync card suspend/buried state
+        Sync card suspend/bury states (v3.0 format)
         
         Args:
-            deck_id: The deck ID
-            action: 'push' or 'pull'
-            changes: List of suspend state changes (for push)
-            since: Timestamp to pull changes after (for pull)
+            deck_id: The deck UUID
+            states: List of state entries
+                    [{"card_guid": "abc123", "is_suspended": true, "is_buried": false}]
         
         Returns:
-            {"success": true, "states_synced": 5}
+            {"success": true}
         """
-        body = {"deck_id": deck_id, "action": action}
-        if changes:
-            body["changes"] = changes
-        if since:
-            body["since"] = since
-        
-        return self.post("/addon-sync-suspend-state", json_body=body)
+        return self.post("/addon-sync-suspend-state", json_body={
+            "deck_id": deck_id,
+            "states": states
+        })
 
-    def sync_media(self, deck_id: str, action: str, **kwargs) -> Any:
+    def sync_media(self, deck_id: str, action: str, 
+                   file_hashes: List[str] = None,
+                   files: List[Dict] = None) -> Any:
         """
-        Sync media files
+        Sync media files (v3.0 format)
         
         Args:
-            deck_id: The deck ID
-            action: 'list', 'get_upload_url', or 'confirm_upload'
-            **kwargs: Additional action-specific parameters
+            deck_id: The deck UUID
+            action: "check" | "upload"
+            file_hashes: List of file hashes to check (for action="check")
+            files: List of files to upload (for action="upload")
+                   [{"file_name": "...", "file_hash": "...", "content_base64": "..."}]
         
         Returns:
-            Varies by action
+            For check:
+                {
+                    "success": true,
+                    "missing_files": ["hash2"],
+                    "files_to_download": [
+                        {"file_name": "image.png", "file_hash": "hash2", "download_url": "..."}
+                    ]
+                }
+            For upload:
+                {"success": true}
         """
-        body = {"deck_id": deck_id, "action": action, **kwargs}
-        return self.post("/addon-sync-media", json_body=body)
+        json_body = {"deck_id": deck_id, "action": action}
+        if file_hashes:
+            json_body["file_hashes"] = file_hashes
+        if files:
+            json_body["files"] = files
+        return self.post("/addon-sync-media", json_body=json_body)
 
     def sync_note_types(self, deck_id: str, action: str = "get", 
                         note_types: Optional[List] = None) -> Any:
