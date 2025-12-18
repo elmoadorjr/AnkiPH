@@ -57,9 +57,9 @@ Authenticates user and returns access token with user capabilities.
     "is_admin": false
   },
   "access": {
-    "owns_collection": true,
     "has_active_subscription": true,
     "has_full_access": true,
+    "subscription_tier": "student",
     "subscription_expires_at": "2025-02-01T00:00:00Z",
     "can_create_decks": true,
     "created_decks_count": 2,
@@ -232,9 +232,9 @@ Manage deck subscriptions (subscribe, unsubscribe, update settings, get status).
     "subscriber_count": 150
   },
   "access": {
-    "owns_collection": true,
-    "has_subscription": true,
+    "has_active_subscription": true,
     "has_full_access": true,
+    "subscription_tier": "student",
     "can_subscribe": true
   }
 }

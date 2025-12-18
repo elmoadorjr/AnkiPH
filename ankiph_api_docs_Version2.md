@@ -60,7 +60,6 @@ Response:
     "id": "uuid",
     "email": "...",
     "is_admin": false,
-    "owns_collection": false,
     "has_subscription": true,
     "subscription_expires_at": "ISO8601",
     "subscription_tier": "premium",
