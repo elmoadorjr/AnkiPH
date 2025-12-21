@@ -951,9 +951,10 @@ class AnkiPHMainDialog(QDialog):
         from .login_dialog import LoginDialog
         dialog = LoginDialog(self)
         if dialog.exec():
-            # Refresh UI in-place instead of requiring reopen
-            tooltip("Login successful!")
-            self._rebuild_ui()
+            # Instead of rebuilding in-place (which can be unstable), 
+            # we close the dialog and ask the user to reopen it.
+            tooltip("Login successful! Please reopen AnkiPH to see your decks.")
+            self.accept()  # Close the current dialog
     
     def open_settings(self):
         """Open settings dialog"""
@@ -1266,4 +1267,5 @@ def show_membership_required_dialog(parent=None):
 
 
 # For backwards compatibility - alias to new dialog
-AnkiPHMainDialog = DeckManagementDialog
+# DeckManagementDialog = AnkiPHMainDialog
+
