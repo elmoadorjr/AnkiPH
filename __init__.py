@@ -26,6 +26,7 @@ try:
     
     # Use simplified main dialog (v3.0.0)
     from .ui.main_dialog import AnkiPHMainDialog as MainDialog
+    from .ui.login_dialog import show_login_dialog
         
 except ImportError as e:
     # Defer error display until Anki is ready (mw might not be initialized yet)
@@ -51,6 +52,24 @@ def show_settings_dialog():
         showInfo(f"Error opening settings:\n{str(e)}")
         if logger:
             logger.exception(f"Settings dialog error: {e}")
+
+
+def on_menu_action(*args):
+    """Smart menu action: Login -> Main Dialog"""
+    try:
+        # If not logged in, show login dialog first
+        if not config.is_logged_in():
+            if show_login_dialog(mw):
+                # If login successful, proceed to main dialog
+                show_main_dialog()
+        else:
+            # Already logged in, show main dialog
+            show_main_dialog()
+            
+    except Exception as e:
+        showInfo(f"Error opening AnkiPH:\n{str(e)}")
+        if logger:
+            logger.exception(f"Menu action error: {e}")
 
 
 def show_main_dialog():
@@ -126,21 +145,17 @@ def on_main_window_did_init():
 
 
 def setup_menu():
-    """Setup menu in Anki - top-level menu in menu bar next to Help"""
+    """Setup menu in Anki - direct action in menu bar next to Help"""
     try:
-        # Create AnkiPH menu in the top menu bar
-        ankiph_menu = QMenu(f"⚖️ AnkiPH", mw)
-        
-        # Add main dialog action
-        open_action = QAction(f"Open AnkiPH v{ADDON_VERSION}", mw)
-        open_action.triggered.connect(show_main_dialog)
-        ankiph_menu.addAction(open_action)
+        # Create AnkiPH action for the top menu bar
+        action = QAction(f"⚖️ AnkiPH", mw)
+        action.triggered.connect(on_menu_action)
         
         # Insert before Help menu (Help is typically the last menu)
         # Get the menubar and insert before Help
         menubar = mw.form.menubar
         help_menu = mw.form.menuHelp
-        menubar.insertMenu(help_menu.menuAction(), ankiph_menu)
+        menubar.insertAction(help_menu.menuAction(), action)
         
         if logger:
             logger.info(f"AnkiPH addon v{ADDON_VERSION} loaded successfully")

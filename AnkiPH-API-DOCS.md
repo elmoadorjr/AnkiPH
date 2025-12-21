@@ -246,7 +246,11 @@ Manage deck subscriptions (subscribe, unsubscribe, update settings, get status).
 
 ### POST `/addon-download-deck`
 
-Download full deck content. Auto-subscribes user if not already subscribed.
+**Core Endpoint**: Performs the initial sync for a deck.
+This endpoint retrieves the complete deck structure (Note Types, Cards, Notes, Media map) in JSON format. The client uses this data to reconstruct the deck in the local Anki database.
+
+**Why Use This?**
+It separates the "Initial Install" intent from subsequent "Sync Updates" (`pull_changes`).
 
 **Request:**
 ```json
@@ -326,6 +330,8 @@ Check if deck has updates since last sync.
   }
 }
 ```
+
+> **BACKEND UPDATE REQUIRED**: The `check_deck_updates` endpoint effectively used this structure. Ensure the backend handles the `addon-check-updates` endpoint correctly for both global and single-deck checks if intended, or rely on this unified endpoint. The client now exclusively uses `check_updates` (global) or this structure.
 
 ---
 
@@ -443,6 +449,9 @@ Push authoritative changes to deck (admin/deck owner only).
 ---
 
 ## 6. User Deck Creation (Premium)
+
+> **Note**: These endpoints allow users to create their own collaborative decks.
+> Free users cannot access these endpoints; they can only sync decks marked as "Free" or "Public" by admins.
 
 ### POST `/addon-create-deck`
 

@@ -16,6 +16,8 @@ import webbrowser
 import time
 import random
 
+from .config import config
+
 from .logger import logger
 try:
     from .constants import COLLECTION_URL, PREMIUM_URL
@@ -207,6 +209,11 @@ class ApiClient:
                 # Don't retry auth errors (401, 403) - they won't succeed on retry
                 if e.status_code and e.status_code in (401, 403):
                     logger.error(f"Authentication error: {e}")
+                    # Clear tokens immediately on auth failure
+                    mask_token = (self.access_token[:10] + "...") if self.access_token else "None"
+                    logger.info(f"Clearing invalid tokens due to {e.status_code} error. Token was: {mask_token}")
+                    config.clear_tokens()
+                    self.access_token = None
                     raise
                 
                 # Retry on 5xx errors (server issues)
@@ -384,9 +391,7 @@ class ApiClient:
 
     # === DECK ENDPOINTS ===
     
-    def get_purchased_decks(self) -> Any:
-        """Get user's purchased decks"""
-        return self.post("/addon-get-purchases")
+    # get_purchased_decks removed in v4.0 (Subscription-only model)
 
     def browse_decks(self, category: str = "all", search: Optional[str] = None,
                      page: int = 1, limit: int = 20) -> Any:
@@ -456,37 +461,7 @@ class ApiClient:
         # See migration guide for full response structure.
         return self.post("/addon-check-updates", json_body={})
 
-    def check_deck_updates(self, deck_id: str, current_version: str,
-                          last_sync_timestamp: Optional[str] = None) -> Any:
-        """
-        Check if a specific deck has updates since last sync (v3.0 format)
-        
-        Args:
-            deck_id: The deck UUID
-            current_version: Current local version (e.g., "1.0.0")
-            last_sync_timestamp: ISO 8601 timestamp of last sync
-        
-        Returns:
-            {
-                "success": true,
-                "has_updates": true,
-                "latest_version": "1.0.1",
-                "changes_count": 25,
-                "change_summary": {
-                    "cards_added": 10,
-                    "cards_modified": 12,
-                    "cards_deleted": 3
-                }
-            }
-        """
-        json_body = {
-            "deck_id": deck_id,
-            "current_version": current_version
-        }
-        if last_sync_timestamp:
-            json_body["last_sync_timestamp"] = last_sync_timestamp
-        
-        return self.post("/addon-check-updates", json_body=json_body)
+    # check_deck_updates removed in v4.0 (Unused - Use check_updates() instead)
 
     # === SUBSCRIPTION MANAGEMENT (v3.0) ===
     
