@@ -20,9 +20,14 @@ from ..utils import escape_anki_search
 from ..update_checker import update_checker
 from .styles import COLORS, apply_dark_theme
 from ..logger import logger
+from ..constants import (
+    HOMEPAGE_URL, TERMS_URL, PRIVACY_URL,
+    PLANS_URL, COMMUNITY_URL, DOCS_URL,
+    HELP_URL, CHANGELOG_URL
+)
 
 
-class DeckManagementDialog(QDialog):
+class AnkiPHMainDialog(QDialog):
     """AnkiHub-style two-panel deck management dialog"""
     
     def __init__(self, parent=None):

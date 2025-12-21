@@ -470,6 +470,10 @@ class ApiClient:
             print(f"✗ Invalid download_url received: {preview}")
             raise AnkiPHAPIError(f"Invalid download URL format. Expected http/https URL, got: {preview[:50]}...")
         
+        # Additional URL validation: check for spaces or newlines
+        if any(c in download_url for c in " \n\r\t"):
+            raise AnkiPHAPIError("Download URL contains invalid characters (spaces or newlines)")
+        
         logger.info(f"Downloading from: {download_url[:80]}...")
 
         if not _HAS_REQUESTS: 

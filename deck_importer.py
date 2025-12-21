@@ -8,6 +8,8 @@ Version: 2.1.0
 
 import tempfile
 import os
+from aqt import mw
+from aqt.operations import QueryOp
 from anki.collection import ImportAnkiPackageRequest
 from .logger import logger
 

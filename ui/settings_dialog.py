@@ -18,6 +18,10 @@ from ..config import config
 from ..utils import escape_anki_search
 from .styles import COLORS, apply_dark_theme
 from ..logger import logger
+from ..constants import (
+    ADDON_VERSION, DOCS_URL, HELP_URL, CHANGELOG_URL,
+    TERMS_URL, PRIVACY_URL, HOMEPAGE_URL
+)
 
 
 def ensure_valid_token():

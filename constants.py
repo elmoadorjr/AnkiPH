@@ -44,3 +44,6 @@ MIN_EASE_FACTOR = 1300  # Anki default in permille
 LEARNING_CARD_TYPE = 1
 REVIEW_CARD_TYPE = 2
 RELEARNING_CARD_TYPE = 3
+
+# Other Constants
+CHUNK_SIZE = 500

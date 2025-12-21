@@ -42,38 +42,45 @@ def show_settings_dialog():
         dialog.exec()
     except Exception as e:
         showInfo(f"Error opening settings:\n{str(e)}")
-        print(f"Settings dialog error: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.exception(f"Settings dialog error: {e}")
 
 
 def show_main_dialog():
     """Show main dialog"""
     global _dialog_instance
     
+    if _dialog_instance:
+        _dialog_instance.raise_()
+        _dialog_instance.activateWindow()
+        return
+
     try:
         # Create new dialog instance
         _dialog_instance = MainDialog(mw)
-        _dialog_instance.exec()
+        _dialog_instance.finished.connect(lambda: _on_dialog_finished())
+        _dialog_instance.show()
         
-        # Sync progress after dialog closes if logged in
-        if config.is_logged_in():
-            try:
-                # Set the access token before syncing
-                token = config.get_access_token()
-                if token:
-                    set_access_token(token)
-                sync.sync_progress()
-                print("✓ Progress synced successfully")
-            except Exception as e: 
-                print(f"Sync failed (non-critical): {e}")
     except Exception as e:
         showInfo(f"Error opening AnkiPH dialog:\n{str(e)}")
-        print(f"Dialog error: {e}")
-        import traceback
-        traceback.print_exc()
-    finally:
+        logger.exception(f"Dialog error: {e}")
         _dialog_instance = None
+
+def _on_dialog_finished():
+    """Cleanup when dialog is closed"""
+    global _dialog_instance
+    _dialog_instance = None
+    
+    # Sync progress after dialog closes if logged in
+    if config.is_logged_in():
+        try:
+            # Set the access token before syncing
+            token = config.get_access_token()
+            if token:
+                set_access_token(token)
+            sync.sync_progress()
+            logger.info("Progress synced successfully after dialog close")
+        except Exception as e: 
+            logger.warning(f"Sync failed (non-critical): {e}")
 
 
 def on_main_window_did_init():
@@ -102,7 +109,7 @@ def on_main_window_did_init():
                 print(f"Auto-apply updates failed (non-critical): {e}")
                 
     except Exception as e:
-        print(f"AnkiPH startup check failed (non-critical): {e}")
+        logger.warning(f"AnkiPH startup check failed (non-critical): {e}")
 
 
 def setup_menu():
@@ -122,11 +129,11 @@ def setup_menu():
         help_menu = mw.form.menuHelp
         menubar.insertMenu(help_menu.menuAction(), ankiph_menu)
         
-        print(f"✓ AnkiPH addon v{ADDON_VERSION} loaded successfully")
-        print(f"  Auto-update check: {config.get_auto_check_updates()}")
+        logger.info(f"AnkiPH addon v{ADDON_VERSION} loaded successfully")
+        logger.info(f"Auto-update check: {config.get_auto_check_updates()}")
         
     except Exception as e:
-        print(f"✗ Error setting up AnkiPH menu: {e}")
+        logger.error(f"Error setting up AnkiPH menu: {e}")
         showInfo(f"AnkiPH addon failed to load:\n{str(e)}")
 
 

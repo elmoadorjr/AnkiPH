@@ -4,6 +4,7 @@ Checks for deck updates in the background and notifies users
 Version: 2.1.0
 """
 
+import threading
 from aqt import mw
 from aqt.utils import showInfo, tooltip
 from datetime import datetime, timedelta
