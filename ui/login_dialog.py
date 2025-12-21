@@ -1,7 +1,7 @@
 """
 Login Dialog for AnkiPH Addon
 Modern Premium Login UI - Stable Version
-Version: 5.1.0 - Fixed for Windows/Anki compatibility
+Version: 5.2.0 - Fixed button visibility and text alignment
 """
 
 import webbrowser
@@ -24,7 +24,7 @@ class LoginDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Sign in to AnkiPH")
-        self.setFixedSize(400, 440)
+        self.setFixedSize(400, 460)
         self.setup_ui()
         self.apply_styles()
     
@@ -56,7 +56,7 @@ class LoginDialog(QDialog):
         
         # Email/Username Input (Stacked)
         email_container = QVBoxLayout()
-        email_container.setSpacing(6)
+        email_container.setSpacing(8)
         
         email_label = QLabel("Username or Email")
         email_label.setObjectName("inputLabel")
@@ -65,45 +65,42 @@ class LoginDialog(QDialog):
         self.email_input = QLineEdit()
         self.email_input.setObjectName("modernInput")
         self.email_input.setPlaceholderText("Enter your username or email")
-        self.email_input.setMinimumHeight(42)
+        self.email_input.setMinimumHeight(44)
         email_container.addWidget(self.email_input)
         
         main_layout.addLayout(email_container)
-        main_layout.addSpacing(18)
+        main_layout.addSpacing(16)
         
         # Password Input (Stacked)
         password_container = QVBoxLayout()
-        password_container.setSpacing(6)
+        password_container.setSpacing(8)
         
         password_label = QLabel("Password")
         password_label.setObjectName("inputLabel")
         password_container.addWidget(password_label)
         
-        # Password field with toggle button inside
-        password_wrapper = QWidget()
-        password_wrapper.setObjectName("passwordWrapper")
-        password_layout = QHBoxLayout(password_wrapper)
-        password_layout.setContentsMargins(0, 0, 0, 0)
-        password_layout.setSpacing(0)
+        # Password field row with separate input and button
+        password_row = QHBoxLayout()
+        password_row.setSpacing(8)
         
         self.password_input = QLineEdit()
-        self.password_input.setObjectName("passwordInput")
+        self.password_input.setObjectName("modernInput")
         self.password_input.setPlaceholderText("Enter your password")
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.password_input.setMinimumHeight(42)
+        self.password_input.setMinimumHeight(44)
         self.password_input.returnPressed.connect(self.login)
-        password_layout.addWidget(self.password_input)
+        password_row.addWidget(self.password_input, 1)
         
-        # Show/Hide button
+        # Show/Hide button - separate from input
         self.toggle_btn = QPushButton("Show")
         self.toggle_btn.setObjectName("toggleBtn")
-        self.toggle_btn.setFixedSize(50, 42)
+        self.toggle_btn.setFixedSize(60, 44)
         self.toggle_btn.setCheckable(True)
         self.toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.toggle_btn.clicked.connect(self.toggle_password_visibility)
-        password_layout.addWidget(self.toggle_btn)
+        password_row.addWidget(self.toggle_btn)
         
-        password_container.addWidget(password_wrapper)
+        password_container.addLayout(password_row)
         main_layout.addLayout(password_container)
         
         main_layout.addSpacing(28)
@@ -129,7 +126,7 @@ class LoginDialog(QDialog):
         # Register link
         register_layout = QHBoxLayout()
         register_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        register_layout.setSpacing(4)
+        register_layout.setSpacing(6)
         
         register_text = QLabel("Don't have an account?")
         register_text.setObjectName("linkText")
@@ -183,7 +180,8 @@ class LoginDialog(QDialog):
                 background-color: {COLORS['bg_primary']};
                 border: 2px solid {COLORS['border']};
                 border-radius: 8px;
-                padding: 8px 14px;
+                padding-left: 14px;
+                padding-right: 14px;
                 font-size: 14px;
                 color: {COLORS['text_primary']};
             }}
@@ -196,44 +194,25 @@ class LoginDialog(QDialog):
                 color: {COLORS['text_muted']};
             }}
             
-            QWidget#passwordWrapper {{
-                background-color: {COLORS['bg_primary']};
+            QPushButton#toggleBtn {{
+                background-color: {COLORS['bg_tertiary']};
                 border: 2px solid {COLORS['border']};
                 border-radius: 8px;
-            }}
-            
-            QWidget#passwordWrapper:focus-within {{
-                border-color: {COLORS['btn_primary']};
-            }}
-            
-            QLineEdit#passwordInput {{
-                background-color: transparent;
-                border: none;
-                padding: 8px 14px;
-                font-size: 14px;
-                color: {COLORS['text_primary']};
-            }}
-            
-            QLineEdit#passwordInput::placeholder {{
-                color: {COLORS['text_muted']};
-            }}
-            
-            QPushButton#toggleBtn {{
-                background-color: transparent;
-                border: none;
-                border-left: 1px solid {COLORS['border']};
-                color: {COLORS['text_muted']};
-                font-size: 11px;
+                color: {COLORS['text_secondary']};
+                font-size: 12px;
                 font-weight: bold;
             }}
             
             QPushButton#toggleBtn:hover {{
+                background-color: {COLORS['bg_hover']};
                 color: {COLORS['text_primary']};
-                background-color: {COLORS['bg_tertiary']};
+                border-color: {COLORS['btn_primary']};
             }}
             
             QPushButton#toggleBtn:checked {{
-                color: {COLORS['btn_primary']};
+                background-color: {COLORS['btn_primary']};
+                border-color: {COLORS['btn_primary']};
+                color: white;
             }}
             
             QPushButton#signinBtn {{
