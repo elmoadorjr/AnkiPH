@@ -15,6 +15,7 @@ from ..api_client import api, set_access_token, AnkiPHAPIError
 from ..config import config
 from ..constants import REGISTER_URL, FORGOT_PASSWORD_URL
 from .styles import COLORS, DARK_THEME
+from .components import ClickableLabel
 
 
 class LoginDialog(QDialog):
@@ -39,6 +40,10 @@ class LoginDialog(QDialog):
             QPushButton#show_btn {{
                 background-color: {COLORS['btn_secondary']};
                 min-height: 20px;
+                transition: background-color 0.2s;
+            }}
+            QPushButton#show_btn:hover {{
+                background-color: {COLORS['btn_secondary_hover']};
             }}
             QPushButton#signin_btn {{
                 background-color: {COLORS['btn_primary']};
@@ -52,6 +57,10 @@ class LoginDialog(QDialog):
             QLabel#link_label {{
                 color: {COLORS['text_link']};
                 font-size: 12px;
+            }}
+            QLabel#link_label:hover {{
+                color: {COLORS['btn_primary_hover']};
+                text-decoration: underline;
             }}
         """)
     
@@ -68,7 +77,7 @@ class LoginDialog(QDialog):
         email_layout.addWidget(email_label)
         
         self.email_input = QLineEdit()
-        self.email_input.setPlaceholderText("")
+        self.email_input.setPlaceholderText("Enter your username or email")
         email_layout.addWidget(self.email_input, 1)
         layout.addLayout(email_layout)
         
@@ -80,6 +89,7 @@ class LoginDialog(QDialog):
         password_layout.addWidget(password_label)
         
         self.password_input = QLineEdit()
+        self.password_input.setPlaceholderText("Enter your password")
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.password_input.returnPressed.connect(self.login)
         password_layout.addWidget(self.password_input, 1)
@@ -199,18 +209,6 @@ class LoginDialog(QDialog):
         return self.result() == QDialog.DialogCode.Accepted
 
 
-class ClickableLabel(QLabel):
-    """Label that can be clicked"""
-    
-    from aqt.qt import pyqtSignal
-    clicked = pyqtSignal()
-    
-    def __init__(self, text="", parent=None):
-        super().__init__(text, parent)
-    
-    def mousePressEvent(self, event):
-        self.clicked.emit()
-        super().mousePressEvent(event)
 
 
 def show_login_dialog(parent=None) -> bool:
