@@ -4,53 +4,105 @@ Single source of truth for version, URLs, and configuration
 Version: 4.0.0 - Subscription-only model
 """
 
-# Addon Info
-ADDON_NAME = "AnkiPH"
-ADDON_VERSION = "4.0.0"
+from typing import Final
 
-# Base URLs - Use primary domain for all features
-BASE_URL = "https://ankiph.lovable.app"
+# =============================================================================
+# ADDON METADATA
+# =============================================================================
 
-# Page URLs (derived from BASE_URL for consistency)
-HOMEPAGE_URL = BASE_URL
-REGISTER_URL = f"{BASE_URL}/auth"
-FORGOT_PASSWORD_URL = f"{BASE_URL}/auth"
-TERMS_URL = f"{BASE_URL}/terms"
-PRIVACY_URL = f"{BASE_URL}/privacy"
-PLANS_URL = f"{BASE_URL}/subscription"
-DOCS_URL = f"{BASE_URL}/ankiph"
-HELP_URL = f"{BASE_URL}/help"
-CHANGELOG_URL = f"{BASE_URL}/help"
-COMMUNITY_URL = f"{BASE_URL}/help"
+ADDON_NAME: Final[str] = "AnkiPH"
+ADDON_VERSION: Final[str] = "4.0.0"
+
+# =============================================================================
+# URL CONFIGURATION
+# =============================================================================
+
+# Base URL - Use primary domain for all features
+BASE_URL: Final[str] = "https://ankiph.lovable.app"
+
+# Public Pages
+HOMEPAGE_URL: Final[str] = BASE_URL
+REGISTER_URL: Final[str] = f"{BASE_URL}/auth"
+FORGOT_PASSWORD_URL: Final[str] = f"{BASE_URL}/auth"
+TERMS_URL: Final[str] = f"{BASE_URL}/terms"
+PRIVACY_URL: Final[str] = f"{BASE_URL}/privacy"
+PLANS_URL: Final[str] = f"{BASE_URL}/subscription"
+DOCS_URL: Final[str] = f"{BASE_URL}/ankiph"
+HELP_URL: Final[str] = f"{BASE_URL}/help"
+CHANGELOG_URL: Final[str] = f"{BASE_URL}/help"
+COMMUNITY_URL: Final[str] = f"{BASE_URL}/help"
 
 # Subscription URLs (v3.3 - subscription-only model)
-COLLECTION_URL = f"{BASE_URL}/collection"
-PREMIUM_URL = f"{BASE_URL}/subscription"
-SUBSCRIBE_URL = PREMIUM_URL  # Alias for subscription page
+COLLECTION_URL: Final[str] = f"{BASE_URL}/collection"
+PREMIUM_URL: Final[str] = f"{BASE_URL}/subscription"
+SUBSCRIBE_URL: Final[str] = PREMIUM_URL  # Alias
 
-# Limits and Magic Numbers (v4.0 - centralized)
+# =============================================================================
+# API CONFIGURATION
+# =============================================================================
 
-SQLITE_MAX_VARIABLES = 999
-API_BATCH_SIZE = 1000
-API_MAX_BATCH_SIZE = 5000
-API_MIN_BATCH_SIZE = 200
+# Database Limits
+SQLITE_MAX_VARIABLES: Final[int] = 999  # SQLite query placeholder limit
 
-# Timing Constants
-SYNC_TIMEOUT_SECONDS = 30
-DOWNLOAD_TIMEOUT_SECONDS = 120
-TARGET_REQUEST_DURATION_MIN = 2.0
-TARGET_REQUEST_DURATION_MAX = 5.0
-DEFAULT_MAX_RETRIES = 3
+# Batch Sizing (for API requests)
+# Balance between network efficiency and server load
+API_BATCH_SIZE: Final[int] = 1000      # Default/initial batch size
+API_MAX_BATCH_SIZE: Final[int] = 2000  # Maximum (adaptive batching ceiling)
+API_MIN_BATCH_SIZE: Final[int] = 200   # Minimum (adaptive batching floor)
+
+# =============================================================================
+# TIMING CONFIGURATION
+# =============================================================================
+
+# Request Timeouts (seconds)
+SYNC_TIMEOUT_SECONDS: Final[int] = 30      # Standard API operations
+DOWNLOAD_TIMEOUT_SECONDS: Final[int] = 120 # Large downloads/imports
+
+# Adaptive Batching Targets
+# Batch size adjusts to keep requests within this duration range
+TARGET_REQUEST_DURATION_MIN: Final[float] = 2.0  # Speed up if faster
+TARGET_REQUEST_DURATION_MAX: Final[float] = 5.0  # Slow down if slower
+
+# Retry Behavior
+DEFAULT_MAX_RETRIES: Final[int] = 3  # Maximum retry attempts
+
+# =============================================================================
+# SECURITY
+# =============================================================================
 
 # Token Validation
-MIN_TOKEN_LENGTH = 20
+MIN_TOKEN_LENGTH: Final[int] = 20  # Minimum valid JWT token length
 
-# Study Stats Constants
-RETENTION_DAYS_LOOKBACK = 30
-LEARNING_CARD_TYPE = 1
-REVIEW_CARD_TYPE = 2
-RELEARNING_CARD_TYPE = 3
+# =============================================================================
+# STUDY STATISTICS
+# =============================================================================
 
-# Support & Contact
-SUPPORT_EMAIL = "nottorney@gmail.com"
-FEEDBACK_URL = f"{BASE_URL}/help"
+# Anki Card Types
+RETENTION_DAYS_LOOKBACK: Final[int] = 30
+LEARNING_CARD_TYPE: Final[int] = 1
+REVIEW_CARD_TYPE: Final[int] = 2
+RELEARNING_CARD_TYPE: Final[int] = 3
+
+# =============================================================================
+# SUPPORT & CONTACT
+# =============================================================================
+
+SUPPORT_EMAIL: Final[str] = "nottorney@gmail.com"
+FEEDBACK_URL: Final[str] = f"{BASE_URL}/help"
+
+# =============================================================================
+# VALIDATION (fails fast on import if misconfigured)
+# =============================================================================
+
+assert API_MIN_BATCH_SIZE < API_BATCH_SIZE < API_MAX_BATCH_SIZE, \
+    "Batch sizes must be: MIN < DEFAULT < MAX"
+
+assert TARGET_REQUEST_DURATION_MIN < TARGET_REQUEST_DURATION_MAX, \
+    "Target duration MIN must be less than MAX"
+
+assert SYNC_TIMEOUT_SECONDS < DOWNLOAD_TIMEOUT_SECONDS, \
+    "Download timeout should exceed sync timeout"
+
+assert DEFAULT_MAX_RETRIES > 0, "Must allow at least one retry"
+
+assert MIN_TOKEN_LENGTH >= 10, "Token validation too permissive"

@@ -1,24 +1,31 @@
 """
 Robust API client for AnkiPH Add-on
-ENHANCED: Added update checking, notifications, and AnkiHub-parity endpoints
-ENHANCED: Added subscription-only access support (subscriber, free tier)
-ENHANCED: Added subscription management and v3.0 API alignment
-FIXED: Token validation, better error handling, no retry on auth errors
-Version: 4.0.0
+Consolidated and Enhanced Version
+
+Features:
+- Thread-safe token refresh with locking
+- Exponential backoff with jitter
+- Rate limiting support (429 handling)
+- Adaptive batch sizing for large datasets
+- Comprehensive error handling
+- Request/response logging
+
+Version: 4.2.0
 """
 
 from __future__ import annotations
 import json
-from typing import Any, Dict, Optional, List
-from enum import Enum
-from datetime import datetime
-import webbrowser
 import time
 import random
+import threading
+import webbrowser
+from typing import Any, Dict, Optional, List, Callable
+from enum import Enum
+from datetime import datetime
 
 from .config import config
-
 from .logger import logger
+
 try:
     from .constants import (
         COLLECTION_URL, PREMIUM_URL, 
@@ -28,41 +35,59 @@ try:
         DEFAULT_MAX_RETRIES, MIN_TOKEN_LENGTH
     )
 except ImportError:
+    # Fallback constants if constants.py is missing
     COLLECTION_URL = "https://ankiph.lovable.app/collection"
     PREMIUM_URL = "https://ankiph.lovable.app/subscription"
-    # Fallbacks
     API_BATCH_SIZE = 500
+    API_MAX_BATCH_SIZE = 1000
+    API_MIN_BATCH_SIZE = 200
     SYNC_TIMEOUT_SECONDS = 30
+    DOWNLOAD_TIMEOUT_SECONDS = 120
+    TARGET_REQUEST_DURATION_MIN = 2.0
+    TARGET_REQUEST_DURATION_MAX = 5.0
+    DEFAULT_MAX_RETRIES = 3
     MIN_TOKEN_LENGTH = 20
 
+# API Configuration
 API_BASE = "https://ladvckxztcleljbiomcf.supabase.co/functions/v1"
+API_VERSION = "4.0"
 
+# HTTP Library Detection
 try:
     import requests  # type: ignore
     _HAS_REQUESTS = True
-except Exception:
+except ImportError:
     import urllib.request as _urllib_request
     import urllib.error as _urllib_error
     _HAS_REQUESTS = False
 
 
-# === ACCESS SYSTEM (v4.0 - unified access control) ===
+# ============================================================================
+# ACCESS CONTROL SYSTEM (v4.0)
+# ============================================================================
 
 class AccessTier(Enum):
-    """User access tier for AnkiPH (v4.0)"""
-    ADMIN = "admin"                              # User has admin role
-    COLLECTION_OWNER = "collection_owner"        # Purchased full collection (₱1000)
-    SUBSCRIBER = "subscriber"                    # Active Anki PH subscription
-    DECK_SUBSCRIBER = "deck_subscriber"          # Subscribed to specific deck
-    LEGACY_PURCHASE = "legacy_purchase"          # Purchased deck individually (old)
-    FREE_TIER = "free_tier"                      # Deck is marked as free
-    PUBLIC_DECK = "public_deck"                  # Deck is public
+    """User access tier for AnkiPH (v4.0 unified hierarchy)"""
+    ADMIN = "admin"
+    COLLECTION_OWNER = "collection_owner"
+    SUBSCRIBER = "subscriber"
+    DECK_SUBSCRIBER = "deck_subscriber"
+    LEGACY_PURCHASE = "legacy_purchase"
+    FREE_TIER = "free_tier"
+    PUBLIC_DECK = "public_deck"
 
 
 def check_access(user_data: dict, deck: dict) -> Optional[AccessTier]:
     """
-    Determine user's access tier for a specific deck (v4.0).
-    Follows the unified access hierarchy from the API.
+    Determine user's access tier for a specific deck.
+    
+    Priority hierarchy:
+    1. Admin (highest)
+    2. Collection Owner (₱1000 lifetime)
+    3. Active Subscriber
+    4. Deck Subscriber
+    5. Legacy Purchase
+    6. Free Tier / Public Deck (lowest)
     
     Args:
         user_data: Dict with is_admin, owns_collection, has_subscription
@@ -75,7 +100,7 @@ def check_access(user_data: dict, deck: dict) -> Optional[AccessTier]:
     if user_data.get("is_admin"):
         return AccessTier.ADMIN
     
-    # Priority 2: Collection owner (₱1000 lifetime)
+    # Priority 2: Collection owner
     if user_data.get("owns_collection"):
         return AccessTier.COLLECTION_OWNER
     
@@ -88,11 +113,13 @@ def check_access(user_data: dict, deck: dict) -> Optional[AccessTier]:
                 if expiry > datetime.now(expiry.tzinfo):
                     return AccessTier.SUBSCRIBER
             except (ValueError, TypeError):
+                # If we can't parse, assume valid
                 return AccessTier.SUBSCRIBER
         else:
+            # No expiry means lifetime
             return AccessTier.SUBSCRIBER
     
-    # Priority 4-6: Check deck-level access from API response
+    # Priority 4-7: Deck-level access
     access_type = deck.get("access_type", "")
     if access_type == "deck_subscriber":
         return AccessTier.DECK_SUBSCRIBER
@@ -103,19 +130,19 @@ def check_access(user_data: dict, deck: dict) -> Optional[AccessTier]:
     if access_type == "public_deck":
         return AccessTier.PUBLIC_DECK
     
-    return None  # No access
+    return None
 
 
 def can_sync_updates(tier: Optional[AccessTier]) -> bool:
     """
     Check if user's tier allows syncing updates.
-    Free tier and public deck users cannot sync updates.
+    Free tier and public deck users cannot sync.
     
     Args:
         tier: The user's AccessTier
     
     Returns:
-        True if user can sync updates, False otherwise
+        True if user can sync updates
     """
     if tier is None:
         return False
@@ -141,8 +168,8 @@ def show_upgrade_prompt():
         dialog.setWindowTitle("Subscription Required")
         dialog.setText(
             "This deck requires an AnkiPH subscription.\n\n"
-            "\u2022 Student: \u20b1100/month\n"
-            "\u2022 Regular: \u20b1149/month\n\n"
+            "• Student: ₱100/month\n"
+            "• Regular: ₱149/month\n\n"
             "Subscribe to sync all 33,709+ Philippine bar exam cards."
         )
         dialog.setIcon(QMessageBox.Icon.Information)
@@ -152,19 +179,30 @@ def show_upgrade_prompt():
         
         dialog.exec()
         
-        clicked = dialog.clickedButton()
-        if clicked == subscribe_btn:
+        if dialog.clickedButton() == subscribe_btn:
             webbrowser.open(PREMIUM_URL)
     except Exception as e:
         logger.error(f"Failed to show upgrade prompt: {e}")
 
 
+# ============================================================================
+# CUSTOM EXCEPTIONS
+# ============================================================================
+
 class AnkiPHAPIError(Exception):
-    """Custom exception for API errors"""
+    """Base exception for all API errors"""
     def __init__(self, message: str, status_code: Optional[int] = None, details: Optional[Any] = None):
         super().__init__(message)
         self.status_code = status_code
         self.details = details
+    
+    def is_auth_error(self) -> bool:
+        """Check if this is an authentication error"""
+        return self.status_code in (401, 403)
+    
+    def is_server_error(self) -> bool:
+        """Check if this is a server error (5xx)"""
+        return self.status_code and 500 <= self.status_code < 600
 
 
 class AnkiPHRateLimitError(AnkiPHAPIError):
@@ -174,236 +212,328 @@ class AnkiPHRateLimitError(AnkiPHAPIError):
         self.retry_after = retry_after
 
 
+# ============================================================================
+# API CLIENT
+# ============================================================================
+
 class ApiClient:
-    """API client for AnkiPH backend"""
+    """
+    Thread-safe API client for AnkiPH backend.
+    
+    Features:
+    - Automatic token refresh on 401
+    - Exponential backoff with jitter
+    - Rate limiting support
+    - Request/response logging
+    - Adaptive batch sizing
+    """
     
     def __init__(self, access_token: Optional[str] = None, base_url: str = API_BASE):
         self.access_token = access_token
         self.base_url = base_url.rstrip("/")
+        self._refresh_lock = threading.Lock()  # Thread-safe token refresh
+        self._refresh_attempted = False  # Track if refresh was attempted this session
+
+    # ------------------------------------------------------------------------
+    # Core HTTP Methods
+    # ------------------------------------------------------------------------
 
     def _headers(self, include_auth: bool = True) -> Dict[str, str]:
-        """Build request headers"""
-        headers = {"Content-Type": "application/json"}
+        """Build request headers with optional authentication"""
+        headers = {
+            "Content-Type": "application/json",
+            "X-API-Version": API_VERSION
+        }
         if include_auth and self.access_token:
             headers["Authorization"] = f"Bearer {self.access_token}"
         return headers
 
     def _full_url(self, path: str) -> str:
-        """Build full URL from path"""
-        if path.startswith("/"):
-            path = path[1:]
-        return f"{self.base_url}/{path}"
-
-    def post(self, path: str, json_body: Optional[Dict[str, Any]] = None, 
-             require_auth: bool = True, timeout: int = SYNC_TIMEOUT_SECONDS, 
-             max_retries: int = DEFAULT_MAX_RETRIES) -> Any:
-        """Make POST request to API with exponential backoff and localized token refresh"""
-        url = self._full_url(path)
-        headers = self._headers(include_auth=require_auth)
-
-        retries = 0
-        refresh_attempted = False
+        """
+        Build full URL from path with validation.
         
-        while retries <= max_retries:
+        Raises:
+            ValueError: If path is empty or invalid
+        """
+        if not path:
+            raise ValueError("API path cannot be empty")
+        
+        clean_path = path.lstrip('/')
+        if not clean_path:
+            raise ValueError("API path cannot be just a slash")
+        
+        return f"{self.base_url}/{clean_path}"
+
+    def post(
+        self, 
+        path: str, 
+        json_body: Optional[Dict[str, Any]] = None, 
+        require_auth: bool = True, 
+        timeout: int = SYNC_TIMEOUT_SECONDS, 
+        max_retries: int = DEFAULT_MAX_RETRIES
+    ) -> Any:
+        """
+        Make POST request with comprehensive retry logic and token refresh.
+        
+        Args:
+            path: API endpoint path (e.g., "/addon-login")
+            json_body: JSON request body
+            require_auth: Whether to include auth token
+            timeout: Request timeout in seconds
+            max_retries: Maximum retry attempts (excluding initial try)
+        
+        Returns:
+            Parsed JSON response
+        
+        Raises:
+            AnkiPHAPIError: On API errors
+            AnkiPHRateLimitError: On rate limiting (429)
+        """
+        url = self._full_url(path)
+        
+        # Log request (debug level)
+        logger.debug(
+            f"POST {path} "
+            f"(auth={require_auth}, timeout={timeout}s, "
+            f"body_keys={list(json_body.keys()) if json_body else 'None'})"
+        )
+        
+        for attempt in range(max_retries + 1):
             try:
+                headers = self._headers(include_auth=require_auth)
+                
+                # Make request
+                start_time = time.time()
                 if _HAS_REQUESTS:
-                    return self._post_with_requests(url, headers, json_body, timeout)
+                    result = self._post_with_requests(url, headers, json_body, timeout)
                 else:
-                    return self._post_with_urllib(url, headers, json_body, timeout)
+                    result = self._post_with_urllib(url, headers, json_body, timeout)
+                
+                # Log success
+                duration = time.time() - start_time
+                logger.debug(f"POST {path} succeeded in {duration:.2f}s")
+                
+                return result
+                    
             except AnkiPHRateLimitError as e:
-                if retries == max_retries:
+                # Rate limiting - wait and retry
+                if attempt == max_retries:
+                    logger.error(f"Rate limited after {max_retries} retries: {e}")
                     raise
                 
                 wait_time = e.retry_after
-                logger.warning(f"Rate limited. Waiting {wait_time}s before retry {retries+1}/{max_retries}")
+                logger.warning(
+                    f"Rate limited on {path}. "
+                    f"Waiting {wait_time}s (attempt {attempt+1}/{max_retries})"
+                )
                 time.sleep(wait_time)
-                retries += 1
-            except AnkiPHAPIError as e:
-                # Handle 401 Unauthorized - Attempt Refresh if not yet tried
-                if e.status_code == 401 and require_auth and not refresh_attempted:
-                    logger.info("Access token expired (401). Attempting silent refresh...")
-                    refresh_attempted = True
-                    try:
-                        refresh_token = config.get_refresh_token()
-                        if refresh_token:
-                            new_tokens = self.refresh_access_token(refresh_token)
-                            
-                            if new_tokens and new_tokens.get("access_token"):
-                                self.access_token = new_tokens["access_token"]
-                                config.set_tokens(
-                                    self.access_token, 
-                                    new_tokens.get("refresh_token") or refresh_token
-                                )
-                                # Update headers with new token
-                                headers = self._headers(include_auth=True)
-                                logger.info("Token refreshed successfully. Retrying request...")
-                                continue
-                            else:
-                                logger.warning("Refresh returned no tokens. Stopping retry.")
-                    except Exception as refresh_err:
-                        logger.error(f"Token refresh failed: {refresh_err}")
-                        # Consider adding a callback for UI notification
-                        if hasattr(self, '_on_refresh_failed'):
-                            try:
-                                self._on_refresh_failed(str(refresh_err))
-                            except Exception:
-                                pass
+                continue
                 
-                # Don't retry auth errors (401, 403) if refresh failed or not applicable
-                if e.status_code and e.status_code in (401, 403):
-                    logger.error(f"Authentication error: {e}")
-                    # Clear tokens immediately on auth failure
+            except AnkiPHAPIError as e:
+                # Handle 401 - attempt token refresh (once per request)
+                if e.status_code == 401 and require_auth and not self._refresh_attempted:
+                    if self._try_refresh_token():
+                        logger.info(f"Token refreshed, retrying {path}")
+                        self._refresh_attempted = True
+                        continue  # Retry with new token
+                
+                # Don't retry auth errors
+                if e.is_auth_error():
+                    logger.error(f"Authentication error on {path}: {e}")
                     config.clear_tokens()
                     self.access_token = None
                     raise
                 
-                # Retry on 5xx errors (server issues)
-                if e.status_code and 500 <= e.status_code < 600 and retries < max_retries:
-                    wait_time = (2 ** retries) + random.random()
-                    logger.warning(f"Server error {e.status_code}. Retrying in {wait_time:.1f}s...")
+                # Retry server errors with exponential backoff
+                if e.is_server_error() and attempt < max_retries:
+                    wait_time = (2 ** attempt) + random.random()
+                    logger.warning(
+                        f"Server error {e.status_code} on {path}. "
+                        f"Retrying in {wait_time:.1f}s... (attempt {attempt+1}/{max_retries})"
+                    )
                     time.sleep(wait_time)
-                    retries += 1
-                else:
-                    raise
+                    continue
+                
+                # Other errors - don't retry
+                logger.error(f"API error on {path}: {e}")
+                raise
+                
             except Exception as e:
-                # Network errors - retry with backoff
-                if retries < max_retries:
-                    wait_time = (2 ** retries) + random.random()
-                    logger.warning(f"Network error: {e}. Retrying in {wait_time:.1f}s...")
+                # Network/connection errors - retry with backoff
+                if attempt < max_retries:
+                    wait_time = (2 ** attempt) + random.random()
+                    logger.warning(
+                        f"Network error on {path}: {e}. "
+                        f"Retrying in {wait_time:.1f}s... (attempt {attempt+1}/{max_retries})"
+                    )
                     time.sleep(wait_time)
-                    retries += 1
                 else:
+                    logger.error(f"Network error on {path} after {max_retries} retries: {e}")
                     raise
 
-    def _post_with_requests(self, url: str, headers: Dict[str, str], 
-                           json_body: Optional[Dict[str, Any]], timeout: int) -> Any:
-        """POST using requests library"""
-        try:
-            with requests.post(url, headers=headers, json=json_body or {}, timeout=timeout, stream=False) as resp:
-                # Handle Rate Limiting (429) inside context
-                if resp.status_code == 429:
-                    retry_after = 60
-                    try:
-                        retry_after = int(resp.headers.get('Retry-After', 60))
-                    except (ValueError, TypeError):
-                        pass
-                        
-                    try:
-                        data = resp.json()
-                        err_msg = data.get("error", "Rate limit exceeded")
-                    except Exception:
-                        data = None
-                        err_msg = "Rate limit exceeded"
-                        
-                    raise AnkiPHRateLimitError(
-                        f"{err_msg}. Retry in {retry_after} seconds.", 
-                        retry_after=retry_after,
-                        details=data
+    def _try_refresh_token(self) -> bool:
+        """
+        Thread-safe token refresh with expiry check.
+        
+        Returns:
+            True if token was successfully refreshed
+        """
+        with self._refresh_lock:
+            # Check if another thread already refreshed
+            if self._refresh_attempted:
+                logger.debug("Token already refreshed by another thread")
+                return True
+            
+            try:
+                refresh_token = config.get_refresh_token()
+                if not refresh_token:
+                    logger.warning("No refresh token available")
+                    return False
+                
+                # Check if token is actually expired (avoid unnecessary refresh)
+                expires_at = config.get_token_expiry()
+                if expires_at and not check_token_expiry(expires_at):
+                    logger.debug("Token still valid, skipping refresh")
+                    return True
+                
+                logger.info("Refreshing expired access token...")
+                new_tokens = self.refresh_access_token(refresh_token)
+                
+                if new_tokens and new_tokens.get("access_token"):
+                    self.access_token = new_tokens["access_token"]
+                    config.set_tokens(
+                        self.access_token, 
+                        new_tokens.get("refresh_token") or refresh_token
                     )
-
-                # Parse response
-                try:
-                    data = resp.json()
-                except Exception: 
-                    text = resp.text if hasattr(resp, "text") else ""
-                    raise AnkiPHAPIError(
-                        f"Invalid response from server (HTTP {resp.status_code})", 
-                        status_code=resp.status_code, 
-                        details=text[:500]
-                    )
-
-                # Check for errors
-                if not resp.ok:
-                    err_msg = None
-                    if isinstance(data, dict):
-                        err_msg = data.get("error") or data.get("message") or data.get("detail")
+                    logger.info("✓ Token refreshed successfully")
+                    self._refresh_attempted = True
+                    return True
+                
+                logger.error("Token refresh returned no access token")
+                return False
                     
-                    if not err_msg:
-                        err_msg = f"HTTP {resp.status_code} error"
-                    
-                    raise AnkiPHAPIError(err_msg, status_code=resp.status_code, details=data)
+            except Exception as e:
+                logger.error(f"Token refresh failed: {e}", exc_info=True)
+                return False
 
-                return data
-        except Exception:
-            raise
-
-    def _post_with_urllib(self, url: str, headers: Dict[str, str], 
-                         json_body: Optional[Dict[str, Any]], timeout: int) -> Any:
-        """POST using urllib (fallback)"""
+    def _parse_response(self, response) -> Any:
+        """
+        Parse and validate HTTP response (shared logic).
+        
+        Args:
+            response: requests.Response or http.client.HTTPResponse object
+        
+        Returns:
+            Parsed JSON data
+        
+        Raises:
+            AnkiPHAPIError: On parsing errors or HTTP errors
+            AnkiPHRateLimitError: On 429 rate limiting
+        """
+        # Parse JSON
         try:
-            req_data = (json.dumps(json_body or {})).encode("utf-8")
+            if hasattr(response, 'json'):
+                data = response.json()
+            else:
+                data = json.loads(response.read().decode("utf-8"))
+        except Exception as e:
+            status = response.status_code if hasattr(response, 'status_code') else response.getcode()
+            raise AnkiPHAPIError(
+                f"Invalid JSON response from server (HTTP {status})", 
+                status_code=status,
+                details=str(e)
+            )
+        
+        status = response.status_code if hasattr(response, 'status_code') else response.getcode()
+        
+        # Check for rate limiting (429)
+        if status == 429:
+            retry_after = 60  # Default
+            try:
+                retry_after = int(response.headers.get('Retry-After', 60))
+            except (ValueError, TypeError, AttributeError):
+                pass
+            
+            err_msg = data.get("error", "Rate limit exceeded") if isinstance(data, dict) else "Rate limit exceeded"
+            raise AnkiPHRateLimitError(
+                f"{err_msg}. Retry in {retry_after} seconds.", 
+                retry_after=retry_after,
+                details=data
+            )
+        
+        # Check for HTTP errors (4xx, 5xx)
+        if status >= 400:
+            err_msg = None
+            if isinstance(data, dict):
+                err_msg = data.get("error") or data.get("message") or data.get("detail")
+            
+            raise AnkiPHAPIError(
+                err_msg or f"HTTP {status} error", 
+                status_code=status, 
+                details=data
+            )
+        
+        return data
+
+    def _post_with_requests(
+        self, 
+        url: str, 
+        headers: Dict[str, str], 
+        json_body: Optional[Dict[str, Any]], 
+        timeout: int
+    ) -> Any:
+        """POST using requests library (preferred)"""
+        with requests.post(url, headers=headers, json=json_body or {}, timeout=timeout) as resp:
+            return self._parse_response(resp)
+
+    def _post_with_urllib(
+        self, 
+        url: str, 
+        headers: Dict[str, str], 
+        json_body: Optional[Dict[str, Any]], 
+        timeout: int
+    ) -> Any:
+        """POST using urllib (fallback when requests not available)"""
+        try:
+            req_data = json.dumps(json_body or {}).encode("utf-8")
             req = _urllib_request.Request(url, data=req_data, headers=headers, method="POST")
             
             with _urllib_request.urlopen(req, timeout=timeout) as resp:
-                raw = resp.read()
-                
-                try:
-                    data = json.loads(raw.decode("utf-8"))
-                except Exception:
-                    raise AnkiPHAPIError(
-                        "Invalid JSON response from server", 
-                        status_code=resp.getcode(), 
-                        details=raw[:500]
-                    )
-                
-                if resp.getcode() >= 400:
-                    err_msg = data.get("error") if isinstance(data, dict) else None
-                    raise AnkiPHAPIError(
-                        err_msg or f"HTTP {resp.getcode()}", 
-                        status_code=resp.getcode(), 
-                        details=data
-                    )
-                
-                return data
+                return self._parse_response(resp)
                 
         except _urllib_error.HTTPError as he:
-            status_code = getattr(he, "code", 0)
-            
-            # Handle rate limiting first (429)
-            if status_code == 429:
-                retry_after = 60
-                try:
-                    retry_after = int(he.headers.get('Retry-After', 60))
-                except (ValueError, TypeError, AttributeError):
-                    pass
-                
-                try:
-                    body = he.read()
-                    parsed = json.loads(body.decode("utf-8"))
-                except Exception:
-                    parsed = None
-                
-                raise AnkiPHRateLimitError(
-                    f"Rate limit exceeded. Retry in {retry_after} seconds.",
-                    retry_after=retry_after,
-                    details=parsed
-                )
-
-            # Handle other errors
-            try:
-                body = he.read()
-                parsed = json.loads(body.decode("utf-8"))
-                err_msg = parsed.get("error") if isinstance(parsed, dict) else None
-            except Exception:
-                parsed = None
-                err_msg = None
-            
-            raise AnkiPHAPIError(
-                err_msg or f"HTTP {status_code}", 
-                status_code=status_code, 
-                details=parsed or str(he)
-            ) from he
+            # Wrap in our exception type
+            return self._parse_response(he)
             
         except _urllib_error.URLError as ue:
-            raise AnkiPHAPIError(f"Connection error: {ue}") from ue
-            
-        except Exception as e:
-            raise AnkiPHAPIError(f"Network error: {e}") from e
+            raise AnkiPHAPIError(
+                f"Connection error: {ue}\n\n"
+                f"Troubleshooting:\n"
+                f"• Check your internet connection\n"
+                f"• Verify the API URL: {self.base_url}\n"
+                f"• Check firewall settings"
+            ) from ue
 
-    # === AUTHENTICATION ENDPOINTS ===
+    # ------------------------------------------------------------------------
+    # Authentication Endpoints
+    # ------------------------------------------------------------------------
     
     def login(self, email: str, password: str) -> Dict[str, Any]:
-        """Login with email and password"""
+        """
+        Login with email and password.
+        
+        Args:
+            email: User email
+            password: User password
+        
+        Returns:
+            {
+                "success": true,
+                "access_token": "...",
+                "refresh_token": "...",
+                "user": {...}
+            }
+        """
         return self.post(
             "/addon-login", 
             json_body={"email": email, "password": password}, 
@@ -411,23 +541,38 @@ class ApiClient:
         )
 
     def refresh_access_token(self, refresh_token: str) -> Dict[str, Any]:
-        """Refresh access token"""
+        """
+        Refresh access token using refresh token.
+        
+        Args:
+            refresh_token: Valid refresh token
+        
+        Returns:
+            {
+                "success": true,
+                "access_token": "...",
+                "refresh_token": "..."
+            }
+        """
         return self.post(
             "/addon-refresh-token", 
             json_body={"refresh_token": refresh_token}, 
             require_auth=False
         )
 
-    # === DECK ENDPOINTS ===
+    # ------------------------------------------------------------------------
+    # Deck Endpoints
+    # ------------------------------------------------------------------------
     
-    # get_purchased_decks removed in v4.0 (Subscription-only model)
-
-    def browse_decks(self, category: str = "all", search: Optional[str] = None,
-                     page: int = 1, limit: int = 20) -> Any:
+    def browse_decks(
+        self, 
+        category: str = "all", 
+        search: Optional[str] = None,
+        page: int = 1, 
+        limit: int = 20
+    ) -> Any:
         """
-        Browse available decks (v4.0 format)
-        Note: subscribe/unsubscribe actions are removed from this endpoint.
-        Use manage_subscription() instead.
+        Browse available decks with filtering.
         
         Args:
             category: "all" | "featured" | "community" | "subscribed"
@@ -450,7 +595,6 @@ class ApiClient:
             "page": page,
             "limit": min(limit, 100)
         }
-        
         if search:
             json_body["search"] = search
         
@@ -458,8 +602,7 @@ class ApiClient:
 
     def download_deck(self, deck_id: str, include_media: bool = True) -> Any:
         """
-        Download full deck content (v3.0 format).
-        Auto-subscribes user if not already subscribed.
+        Download full deck content (initial sync).
         
         Args:
             deck_id: The deck UUID
@@ -471,8 +614,7 @@ class ApiClient:
                 "deck": {...},
                 "cards": [...],
                 "note_types": [...],
-                "media_files": [...],
-                "subscribed": true
+                "media_files": [...]
             }
         """
         return self.post("/addon-download-deck", json_body={
@@ -480,64 +622,48 @@ class ApiClient:
             "include_media": include_media
         })
 
-    # batch_download_decks & download_deck_file removed in v4.0 (Database-Only Sync)
-
-    # === UPDATE CHECKING (NEW) ===
-    
     def check_updates(self) -> Any:
-        # V4: POST /addon-check-updates with empty body
-        # Returns: {"success": true, "decks": [...]} with new deck format
-        # See migration guide for full response structure.
+        """
+        Check for deck updates (global check for all subscribed decks).
+        
+        Returns:
+            {
+                "success": true,
+                "decks": [
+                    {
+                        "deck_id": "...",
+                        "has_update": true,
+                        "current_version": "1.0.0",
+                        "synced_version": "0.9.0"
+                    }
+                ]
+            }
+        """
         return self.post("/addon-check-updates", json_body={})
 
-    # check_deck_updates removed in v4.0 (Unused - Use check_updates() instead)
-
-    # === SUBSCRIPTION MANAGEMENT (v3.0) ===
-    
-    def manage_subscription(self, action: str, deck_id: str,
-                           sync_enabled: bool = True,
-                           notify_updates: bool = True) -> Any:
+    def manage_subscription(
+        self, 
+        action: str, 
+        deck_id: str,
+        sync_enabled: bool = True,
+        notify_updates: bool = True
+    ) -> Any:
         """
-        Manage deck subscriptions (subscribe, unsubscribe, update settings, get status)
+        Manage deck subscriptions.
         
         Args:
             action: "subscribe" | "unsubscribe" | "update" | "get"
             deck_id: The deck UUID
-            sync_enabled: Enable sync for this deck (default: True)
-            notify_updates: Receive update notifications (default: True)
+            sync_enabled: Enable auto-sync for this deck
+            notify_updates: Receive update notifications
         
         Returns:
-            For subscribe/unsubscribe:
-                {"success": true, "subscribed": true/false, "message": "..."}
-            
-            For update:
-                {"success": true}
-            
-            For get:
-                {
-                    "success": true,
-                    "subscription": {
-                        "deck_id": "uuid",
-                        "current_version": "1.0.0",
-                        "latest_version": "1.0.1",
-                        "has_update": true,
-                        "update_type": "standard",
-                        "changelog_summary": "Update available",
-                        "checked_at": "2025-01-15T10:00:00Z"
-                    },
-                    "deck": {...},
-                    "access": {...}
-                }
-        
-        Access Rules:
-            - Featured decks (is_featured: true): Free for all users
-            - Other decks: Requires has_full_access (collection owner OR premium)
+            Depends on action:
+            - subscribe/unsubscribe: {"success": true, "subscribed": bool}
+            - update: {"success": true}
+            - get: {"success": true, "subscription": {...}}
         """
-        json_body = {
-            "action": action,
-            "deck_id": deck_id
-        }
-        
+        json_body = {"action": action, "deck_id": deck_id}
         if action in ("subscribe", "update"):
             json_body["sync_enabled"] = sync_enabled
             json_body["notify_updates"] = notify_updates
@@ -546,10 +672,10 @@ class ApiClient:
 
     def get_changelog(self, deck_id: str, from_version: Optional[str] = None) -> Any:
         """
-        Get changelog/version history for a deck (v3.0 format)
+        Get changelog/version history for a deck.
         
         Args:
-            deck_id: The deck ID
+            deck_id: The deck UUID
             from_version: Optional version to get changes after
         
         Returns:
@@ -558,11 +684,9 @@ class ApiClient:
                 "changelog": [
                     {
                         "version": "1.0.1",
-                        "notes": "Updated constitutional law cards",
+                        "notes": "...",
                         "cards_added": 10,
-                        "cards_modified": 15,
-                        "cards_deleted": 2,
-                        "released_at": "2025-01-15T10:00:00Z"
+                        "released_at": "..."
                     }
                 ]
             }
@@ -574,7 +698,7 @@ class ApiClient:
 
     def check_notifications(self, last_check: Optional[str] = None) -> Any:
         """
-        Check for pending notifications (v3.0 format)
+        Check for pending notifications.
         
         Args:
             last_check: ISO 8601 timestamp of last check
@@ -584,12 +708,10 @@ class ApiClient:
                 "success": true,
                 "notifications": [
                     {
-                        "id": "uuid",
+                        "id": "...",
                         "type": "deck_update",
-                        "title": "Deck Updated",
-                        "message": "Nottorney Collection has been updated to v1.0.1",
-                        "deck_id": "uuid",
-                        "created_at": "2025-01-15T10:00:00Z"
+                        "title": "...",
+                        "message": "..."
                     }
                 ]
             }
@@ -599,17 +721,21 @@ class ApiClient:
             json_body["last_check"] = last_check
         return self.post("/addon-check-notifications", json_body=json_body)
 
-    # === PROGRESS & SYNC ENDPOINTS ===
+    # ------------------------------------------------------------------------
+    # Progress & Sync Endpoints
+    # ------------------------------------------------------------------------
     
-    def sync_progress(self, deck_id: str = None, progress: Dict = None,
-                      progress_data: List[Dict] = None) -> Any:
+    def sync_progress(
+        self, 
+        deck_id: str = None, 
+        progress: Dict = None,
+        progress_data: List[Dict] = None
+    ) -> Any:
         """
-        Sync study progress to server (v4.0 format)
-        
-        V4 expects a 'progress' array at the top level.
+        Sync study progress to server (v4.0 format).
         
         Args:
-            deck_id: The deck UUID (for single-deck sync, will be wrapped)
+            deck_id: The deck UUID (for single-deck sync)
             progress: Progress data dict (for single-deck sync)
             progress_data: List of progress entries (batch format)
         
@@ -617,67 +743,78 @@ class ApiClient:
             {"success": true, "synced_at": "...", "leaderboard_updated": true}
         """
         if deck_id and progress:
-            # V4 format: wrap single deck in progress array
+            # Single deck format
             progress_entry = {"deck_id": deck_id, **progress}
             return self.post("/addon-sync-progress", json_body={
                 "progress": [progress_entry]
             })
         elif progress_data:
-            # Batch format - already an array
+            # Batch format
             return self.post("/addon-sync-progress", json_body={
                 "progress": progress_data
             })
         else:
+            # Empty sync
             return self.post("/addon-sync-progress", json_body={
                 "progress": []
             })
 
-    # === ANKIHUB-PARITY: COLLABORATIVE FEATURES (NEW) ===
+    # ------------------------------------------------------------------------
+    # Collaborative Features
+    # ------------------------------------------------------------------------
     
     def push_changes(self, deck_id: str, changes: List[Dict]) -> Any:
         """
-        Push user's local changes as suggestions for review (v3.0 format).
+        Push user's local changes as suggestions for review.
         
         Args:
             deck_id: The deck UUID
-            changes: List of card changes, each with:
-                     - card_guid: The card's GUID
-                     - field_name: Name of the field changed
-                     - old_value: Current field value
-                     - new_value: Suggested new value
-                     - reason: Optional reason for the change
+            changes: List of card changes with card_guid, field_name, old_value, new_value
         
         Returns:
-            {"success": true, "changes_saved": 1, "message": "Changes submitted for review"}
+            {"success": true, "changes_saved": 1}
         """
-        return self.post("/addon-push-changes", 
-                        json_body={"deck_id": deck_id, "changes": changes})
+        return self.post("/addon-push-changes", json_body={
+            "deck_id": deck_id,
+            "changes": changes
+        })
 
-    def pull_changes(self, deck_id: str, since: Optional[str] = None, 
-                     last_change_id: Optional[str] = None,
-                     full_sync: bool = False,
-                     offset: int = 0,
-                     limit: int = API_BATCH_SIZE) -> Any:
+    def pull_changes(
+        self, 
+        deck_id: str, 
+        since: Optional[str] = None, 
+        last_change_id: Optional[str] = None,
+        full_sync: bool = False, 
+        offset: int = 0,
+        limit: int = API_BATCH_SIZE
+    ) -> Any:
         """
-        Pull publisher changes since last sync
+        Pull publisher changes since last sync.
         
         Args:
-            deck_id: The deck ID
+            deck_id: The deck UUID
             since: ISO 8601 timestamp to pull changes after
             last_change_id: ID of last synced change
-            full_sync: If True, returns all cards from collaborative_deck_cards (source of truth)
-            offset: Pagination offset for full_sync (default: 0)
-            limit: Number of cards per page (default: 1000)
+            full_sync: If True, returns all cards (initial sync)
+            offset: Pagination offset for full_sync
+            limit: Number of cards per page (max 1000)
         
         Returns:
+            Incremental sync:
             {
                 "success": true,
-                "changes": [...],    # if full_sync=False
-                "cards": [...],      # if full_sync=True
-                "conflicts": [...],
-                "has_more": true/false,  # pagination indicator
-                "next_offset": 1000,     # next offset to use
-                "total_cards": 32435     # total card count
+                "changes": [...],
+                "latest_change_id": "..."
+            }
+            
+            Full sync:
+            {
+                "success": true,
+                "cards": [...],
+                "note_types": [...],
+                "total_cards": 32435,
+                "has_more": true,
+                "next_offset": 1000
             }
         """
         body = {
@@ -693,13 +830,22 @@ class ApiClient:
         
         return self.post("/addon-pull-changes", json_body=body)
     
-    def pull_all_cards(self, deck_id: str, progress_callback=None) -> dict:
+    def pull_all_cards(
+        self, 
+        deck_id: str, 
+        progress_callback: Optional[Callable[[int, int], None]] = None
+    ) -> dict:
         """
-        Pull ALL cards from a deck, handling pagination automatically.
+        Pull ALL cards from a deck with automatic pagination.
+        
+        This method handles large decks (32,000+ cards) by:
+        - Fetching in batches to avoid timeouts
+        - Adaptive batch sizing based on network speed
+        - Progress callbacks for UI updates
         
         Args:
-            deck_id: The deck ID
-            progress_callback: Optional callback(fetched, total) for progress updates
+            deck_id: The deck UUID
+            progress_callback: Optional function(fetched: int, total: int) -> None
         
         Returns:
             {
@@ -707,7 +853,7 @@ class ApiClient:
                 "cards": [...],  # All cards combined
                 "note_types": [...],
                 "total_cards": 32435,
-                "latest_change_id": "uuid"
+                "latest_change_id": "..."
             }
         """
         all_cards = []
@@ -734,21 +880,20 @@ class ApiClient:
             
             cards = result.get('cards', [])
             
-            # Adjust batch size based on duration for next request
-            # Only adjust if we got a full batch (otherwise connection speed isn't the bottleneck)
+            # Adaptive batch sizing based on request duration
             if len(cards) >= limit:
                 if duration > TARGET_REQUEST_DURATION_MAX and limit > API_MIN_BATCH_SIZE:
-                    old_limit = limit
-                    limit = max(API_MIN_BATCH_SIZE, int(limit * 0.85))  # Less aggressive reduction
-                    logger.info(f"Diff sync too slow ({duration:.2f}s), reducing batch: {old_limit} -> {limit}")
+                    # Too slow, reduce batch size
+                    limit = max(API_MIN_BATCH_SIZE, int(limit * 0.85))
+                    logger.debug(f"Reducing batch size to {limit} (slow connection)")
                 elif duration < TARGET_REQUEST_DURATION_MIN and limit < API_MAX_BATCH_SIZE:
-                    old_limit = limit
-                    limit = min(API_MAX_BATCH_SIZE, int(limit * 1.3))  # More conservative growth
-                    logger.info(f"Diff sync fast ({duration:.2f}s), increasing batch: {old_limit} -> {limit}")
+                    # Fast enough, increase batch size
+                    limit = min(API_MAX_BATCH_SIZE, int(limit * 1.3))
+                    logger.debug(f"Increasing batch size to {limit} (fast connection)")
             
             all_cards.extend(cards)
             
-            # Get note types from first batch only
+            # Get metadata from first batch only
             if offset == 0:
                 note_types = result.get('note_types', [])
                 total_cards = result.get('total_cards', len(cards))
@@ -756,25 +901,25 @@ class ApiClient:
             
             # Progress callback
             if progress_callback:
-                progress_callback(len(all_cards), total_cards)
+                try:
+                    progress_callback(len(all_cards), total_cards)
+                except Exception as e:
+                    logger.warning(f"Progress callback error: {e}")
             
-            logger.info(f"Fetched batch: offset={offset}, got {len(cards)} cards (total: {len(all_cards)}/{total_cards})")
+            logger.info(
+                f"Fetched batch: offset={offset}, got {len(cards)} cards "
+                f"(total: {len(all_cards)}/{total_cards})"
+            )
             
-            # Check if more cards to fetch
-            # Robust check: use total_cards if available, otherwise check if batch is full
-            if len(all_cards) >= total_cards and total_cards > 0:
-                has_more = False
-            else:
-                has_more = result.get('has_more', False)
-                # Fallback: if backend didn't send has_more, check batch size
-                if not has_more and len(cards) == limit:
-                    has_more = True
-            
+            # Check if more to fetch
+            has_more = result.get('has_more', len(cards) == limit)
             if not has_more or len(cards) == 0:
                 break
             
             # Move to next page
             offset = result.get('next_offset', offset + limit)
+        
+        logger.info(f"Pull complete: fetched {len(all_cards)} cards in total")
         
         return {
             "success": True,
@@ -784,14 +929,20 @@ class ApiClient:
             "latest_change_id": latest_change_id
         }
 
-    def submit_suggestion(self, deck_id: str, card_guid: str, field_name: str,
-                         current_value: str, suggested_value: str, 
-                         reason: Optional[str] = None) -> Any:
+    def submit_suggestion(
+        self, 
+        deck_id: str, 
+        card_guid: str, 
+        field_name: str,
+        current_value: str, 
+        suggested_value: str, 
+        reason: Optional[str] = None
+    ) -> Any:
         """
-        Submit a card improvement suggestion
+        Submit a card improvement suggestion.
         
         Args:
-            deck_id: The deck ID
+            deck_id: The deck UUID
             card_guid: The card's GUID
             field_name: Name of the field to change
             current_value: Current field value
@@ -799,7 +950,7 @@ class ApiClient:
             reason: Optional reason for suggestion
         
         Returns:
-            {"success": true, "suggestion_id": "sugg123"}
+            {"success": true, "suggestion_id": "..."}
         """
         return self.post("/addon-submit-suggestion", json_body={
             "deck_id": deck_id,
@@ -812,8 +963,7 @@ class ApiClient:
 
     def get_protected_fields(self, deck_id: str) -> Any:
         """
-        Get user's protected fields (v3.0 format)
-        Fields that won't be overwritten during sync.
+        Get user's protected fields (won't be overwritten during sync).
         
         Args:
             deck_id: The deck UUID
@@ -823,7 +973,7 @@ class ApiClient:
                 "success": true,
                 "protected_fields": [
                     {
-                        "card_guid": "abc123",
+                        "card_guid": "...",
                         "field_names": ["Extra", "Personal Notes"]
                     }
                 ]
@@ -833,10 +983,10 @@ class ApiClient:
 
     def get_card_history(self, deck_id: str, card_guid: str, limit: int = 50) -> Any:
         """
-        Get change history for a specific card
+        Get change history for a specific card.
         
         Args:
-            deck_id: The deck ID
+            deck_id: The deck UUID
             card_guid: The card's GUID
             limit: Maximum number of history entries
         
@@ -846,46 +996,54 @@ class ApiClient:
                 "history": [
                     {
                         "version": "1.2.0",
-                        "changed_at": "2024-12-10T10:00:00Z",
-                        "changed_by": "publisher",
-                        "changes": {"Front": "Old value"}
+                        "changed_at": "...",
+                        "changed_by": "...",
+                        "changes": {...}
                     }
                 ]
             }
         """
-        return self.post("/addon-get-card-history", 
-                        json_body={"deck_id": deck_id, "card_guid": card_guid, "limit": limit})
+        return self.post("/addon-get-card-history", json_body={
+            "deck_id": deck_id,
+            "card_guid": card_guid,
+            "limit": limit
+        })
 
     def rollback_card(self, deck_id: str, card_guid: str, target_version: str) -> Any:
         """
-        Rollback a card to a previous version
+        Rollback a card to a previous version.
         
         Args:
-            deck_id: The deck ID
+            deck_id: The deck UUID
             card_guid: The card's GUID
             target_version: Version to rollback to
         
         Returns:
             {"success": true}
         """
-        return self.post("/addon-rollback-card", 
-                        json_body={
-                            "deck_id": deck_id,
-                            "card_guid": card_guid,
-                            "target_version": target_version
-                        })
+        return self.post("/addon-rollback-card", json_body={
+            "deck_id": deck_id,
+            "card_guid": card_guid,
+            "target_version": target_version
+        })
 
-    # === DATA SYNC (NEW) ===
+    # ------------------------------------------------------------------------
+    # Data Sync (Advanced)
+    # ------------------------------------------------------------------------
     
-    def sync_tags(self, deck_id: str, action: str = "pull", tags: List[Dict] = None) -> Any:
+    def sync_tags(
+        self, 
+        deck_id: str, 
+        action: str = "pull", 
+        tags: Optional[List[Dict]] = None
+    ) -> Any:
         """
-        Sync card tags (v3.0 format)
+        Sync card tags.
         
         Args:
             deck_id: The deck UUID
             action: "pull" or "push"
-            tags: List of tag entries (for push)
-                  [{"card_guid": "abc123", "tags": ["tag1", "tag2"]}]
+            tags: List of tag entries for push [{"card_guid": "...", "tags": [...]}]
         
         Returns:
             {"success": true, "tags_added": 0, "tags_removed": 0}
@@ -895,15 +1053,19 @@ class ApiClient:
             json_body["tags"] = tags
         return self.post("/addon-sync-tags", json_body=json_body)
 
-    def sync_suspend_state(self, deck_id: str, action: str = "pull", states: List[Dict] = None) -> Any:
+    def sync_suspend_state(
+        self, 
+        deck_id: str, 
+        action: str = "pull", 
+        states: Optional[List[Dict]] = None
+    ) -> Any:
         """
-        Sync card suspend/bury states (v3.0 format)
+        Sync card suspend/bury states.
         
         Args:
             deck_id: The deck UUID
             action: "pull" or "push"
-            states: List of state entries (for push)
-                    [{"card_guid": "abc123", "is_suspended": true, "is_buried": false}]
+            states: List of states for push [{"card_guid": "...", "is_suspended": bool}]
         
         Returns:
             {"success": true, "cards_updated": 0}
@@ -913,28 +1075,25 @@ class ApiClient:
             json_body["states"] = states
         return self.post("/addon-sync-suspend-state", json_body=json_body)
 
-    def sync_media(self, deck_id: str, action: str, 
-                   file_hashes: List[str] = None,
-                   files: List[Dict] = None) -> Any:
+    def sync_media(
+        self, 
+        deck_id: str, 
+        action: str, 
+        file_hashes: Optional[List[str]] = None,
+        files: Optional[List[Dict]] = None
+    ) -> Any:
         """
-        Sync media files (v3.0 format)
+        Sync media files.
         
         Args:
             deck_id: The deck UUID
             action: "check" | "upload" | "download"
-            file_hashes: List of file hashes to check (for action="check")
-            files: List of files to upload (for action="upload")
-                   [{"file_name": "...", "file_hash": "...", "content_base64": "..."}]
+            file_hashes: List of file hashes to check
+            files: List of files to upload [{"file_name": "...", "content_base64": "..."}]
         
         Returns:
             For check:
-                {
-                    "success": true,
-                    "missing_files": ["hash2"],
-                    "files_to_download": [
-                        {"file_name": "image.png", "file_hash": "hash2", "download_url": "..."}
-                    ]
-                }
+                {"success": true, "missing_files": [...], "files_to_download": [...]}
             For upload/download:
                 {"success": true, "files_uploaded": 0, "files_downloaded": 0}
         """
@@ -945,13 +1104,17 @@ class ApiClient:
             json_body["files"] = files
         return self.post("/addon-sync-media", json_body=json_body)
 
-    def sync_note_types(self, deck_id: str, action: str = "get", 
-                        note_types: Optional[List] = None) -> Any:
+    def sync_note_types(
+        self, 
+        deck_id: str, 
+        action: str = "get", 
+        note_types: Optional[List] = None
+    ) -> Any:
         """
-        Sync note type templates and CSS
+        Sync note type templates and CSS.
         
         Args:
-            deck_id: The deck ID
+            deck_id: The deck UUID
             action: 'get' or 'push'
             note_types: List of note types to push
         
@@ -964,212 +1127,62 @@ class ApiClient:
         
         return self.post("/addon-sync-note-types", json_body=body)
 
-    def pull_changes_full(self, deck_id: str) -> Any:
-        """
-        Pull full card data from collaborative_deck_cards (source of truth).
-        Use for initial sync or complete re-sync.
-        
-        Args:
-            deck_id: The deck ID
-        
-        Returns:
-            {
-                "success": true,
-                "full_sync": true,
-                "cards": [
-                    {
-                        "card_guid": "abc123",
-                        "note_type": "Basic",
-                        "fields": {"Front": "...", "Back": "..."},
-                        "tags": ["tag1", "tag2"],
-                        "updated_at": "2024-12-10T15:00:00Z"
-                    }
-                ],
-                "total_cards": 500,
-                "deck_version": "2.1.0"
-            }
-        """
-        return self.post("/addon-pull-changes", json_body={"deck_id": deck_id, "full_sync": True})
+    # ------------------------------------------------------------------------
+    # Admin Endpoints
+    # ------------------------------------------------------------------------
 
-    # === ADMIN ENDPOINTS (NEW) ===
-
-    def _batch_upload_data(self, endpoint: str, data_key: str, items: List[Dict], 
-                          extra_body: Dict = None, batch_size: int = API_BATCH_SIZE) -> Dict[str, Any]:
-        """
-        Helper to upload data in batches.
-        
-        Args:
-            endpoint: API endpoint
-            data_key: Key for the list of items in the body (e.g., "cards", "changes")
-            items: List of items to upload
-            extra_body: Additional fields for the body
-            batch_size: Number of items per batch
-            
-        Returns:
-            Aggregated result dictionary
-        """
-        if not items:
-            return {"success": True, "processed": 0}
-            
-        total = len(items)
-        chunk_size = min(batch_size, API_MAX_BATCH_SIZE)
-        
-        logger.info(f"Starting batch upload: {total} items to {endpoint} (batch size: {chunk_size})")
-        
-        aggregated_stats = {"processed": 0, "success": True}
-        
-        for i in range(0, total, chunk_size):
-            batch = items[i:i+chunk_size]
-            body = {data_key: batch}
-            if extra_body:
-                body.update(extra_body)
-                
-            try:
-                # Use longer timeout for batches
-                result = self.post(endpoint, json_body=body, timeout=int(SYNC_TIMEOUT_SECONDS * 2))
-                
-                # Aggregate stats if returned keys are numeric
-                if isinstance(result, dict):
-                    for k, v in result.items():
-                        if isinstance(v, (int, float)) and not isinstance(v, bool):
-                            aggregated_stats[k] = aggregated_stats.get(k, 0) + v
-                        elif k not in aggregated_stats and k != "success":
-                            aggregated_stats[k] = v
-                            
-                aggregated_stats["processed"] += len(batch)
-                logger.debug(f"Uploaded batch {i//chunk_size + 1}: {len(batch)} items")
-                
-            except Exception as e:
-                logger.error(f"Batch upload failed at offset {i}: {e}")
-                return {
-                    "success": False, 
-                    "error": str(e), 
-                    "processed": aggregated_stats["processed"]
-                }
-                
-        return aggregated_stats
-    
-    def admin_push_changes(self, deck_id: str, changes: List[Dict], version: str,
-                           version_notes: Optional[str] = None,
-                           timeout: int = 60) -> Any:
+    def admin_push_changes(
+        self, 
+        deck_id: str, 
+        changes: List[Dict], 
+        version: str,
+        version_notes: Optional[str] = None,
+        timeout: int = 120
+    ) -> Any:
         """
         Admin: Push card changes from Anki to database as publisher changes.
-        Only available to deck publishers/admins.
         
         Args:
-            deck_id: The deck ID
-            changes: List of card changes (each with guid, note_type, fields, tags, change_type)
-            version: New version string for this update
-            version_notes: Optional release notes for this version
-            timeout: Request timeout in seconds (default 60)
+            deck_id: The deck UUID
+            changes: List of card changes
+            version: New version string
+            version_notes: Optional release notes
+            timeout: Request timeout (default 120s for large batches)
         
         Returns:
-            {"success": true, "cards_added": 0, "cards_modified": 50, "new_version": "2.2.0"}
+            {"success": true, "cards_added": 0, "cards_modified": 50, "new_version": "..."}
         """
-        if len(changes) > API_BATCH_SIZE:
-            extra_body = {"deck_id": deck_id, "version": version}
-            if version_notes:
-                extra_body["version_notes"] = version_notes
-                
-            return self._batch_upload_data(
-                "/addon-admin-push-changes", 
-                "changes", 
-                changes, 
-                extra_body=extra_body,
-                batch_size=API_BATCH_SIZE
-            )
-            
-        # Single request for small payloads
         body = {"deck_id": deck_id, "changes": changes, "version": version}
         if version_notes:
             body["version_notes"] = version_notes
         return self.post("/addon-admin-push-changes", json_body=body, timeout=timeout)
 
-    def admin_import_deck(self, deck_id: Optional[str], cards: List[Dict], version: str,
-                          version_notes: Optional[str] = None,
-                          clear_existing: bool = False,
-                          deck_title: Optional[str] = None,
-                          timeout: int = 60) -> Any:
+    def admin_import_deck(
+        self, 
+        deck_id: Optional[str], 
+        cards: List[Dict], 
+        version: str,
+        version_notes: Optional[str] = None,
+        clear_existing: bool = False,
+        deck_title: Optional[str] = None,
+        timeout: int = 180
+    ) -> Any:
         """
         Admin: Import full deck to database (initial setup or full refresh).
-        Only available to deck publishers/admins.
         
         Args:
-            deck_id: The deck ID to import into (None if creating new deck)
-            cards: List of card data (each with card_guid, note_type, fields, tags)
-            version: Version string for this import
-            version_notes: Optional release notes for this version
+            deck_id: The deck UUID (None if creating new deck)
+            cards: List of card data
+            version: Version string
+            version_notes: Optional release notes
             clear_existing: If True, clears existing cards before import
             deck_title: Title for new deck (required if deck_id is None)
-            timeout: Request timeout in seconds (default 60)
+            timeout: Request timeout (default 180s for large imports)
         
         Returns:
-            {"success": true, "deck_id": "uuid", "cards_imported": 500, "version": "1.0.0"}
+            {"success": true, "deck_id": "...", "cards_imported": 500, "version": "..."}
         """
-        if len(cards) > API_BATCH_SIZE:
-            extra_body = {
-                "version": version,
-                "clear_existing": clear_existing
-            }
-            if deck_id:
-                extra_body["deck_id"] = deck_id
-            if deck_title:
-                extra_body["deck_title"] = deck_title
-            if version_notes:
-                extra_body["version_notes"] = version_notes
-                
-            # Note: For import, ideally we only clear on the FIRST batch
-            # But the API might handle it. Assuming API appends if clear_existing=False?
-            # Safe approach: pass clear_existing only on first batch?
-            # For simplicity, we assume API handles overwrite or we let the user handle it.
-            # actually, if clear_existing is True, we must be careful not to clear on subsequent batches.
-            
-            # This logic is tricky. If clear_existing=True, valid only for first batch.
-            # Let's handle first batch specially if needed.
-            # A generic batch uploader might not suffice if side-effects differ per batch.
-            
-            # Custom batch logic for import to handle clear_existing
-            items = cards
-            total = len(items)
-            chunk_size = API_BATCH_SIZE
-            aggregated_stats = {"processed": 0, "success": True}
-            
-            for i in range(0, total, chunk_size):
-                batch = items[i:i+chunk_size]
-                
-                # Only clear on first batch
-                current_clear = clear_existing and (i == 0)
-                
-                body = {
-                    "cards": batch,
-                    "version": version,
-                    "clear_existing": current_clear
-                }
-                if deck_id:
-                    body["deck_id"] = deck_id
-                if deck_title:
-                    body["deck_title"] = deck_title
-                if version_notes and i == 0:
-                    body["version_notes"] = version_notes
-                    
-                try:
-                    result = self.post("/addon-admin-import-deck", json_body=body, timeout=timeout)
-                    # Aggregate (simplified)
-                    aggregated_stats["processed"] += len(batch)
-                    if isinstance(result, dict) and result.get("deck_id"):
-                        aggregated_stats["deck_id"] = result.get("deck_id")
-                except Exception as e:
-                    logger.error(f"Import batch failed: {e}")
-                    return {"success": False, "error": str(e)}
-            
-            return aggregated_stats
-
-        # Single request
-        body = {
-            "cards": cards,
-            "version": version,
-            "clear_existing": clear_existing
-        }
+        body = {"cards": cards, "version": version, "clear_existing": clear_existing}
         if deck_id:
             body["deck_id"] = deck_id
         if deck_title:
@@ -1178,12 +1191,18 @@ class ApiClient:
             body["version_notes"] = version_notes
         return self.post("/addon-admin-import-deck", json_body=body, timeout=timeout)
 
-    # === COLLABORATIVE DECK MANAGEMENT (v3.0) ===
+    # ------------------------------------------------------------------------
+    # Collaborative Deck Management (User-Created Decks)
+    # ------------------------------------------------------------------------
     
-    def create_deck(self, title: str, description: str = "", 
-                    bar_subject: Optional[str] = None, 
-                    is_public: bool = True,
-                    tags: Optional[List[str]] = None) -> Any:
+    def create_deck(
+        self, 
+        title: str, 
+        description: str = "", 
+        bar_subject: Optional[str] = None, 
+        is_public: bool = True,
+        tags: Optional[List[str]] = None
+    ) -> Any:
         """
         Create a new collaborative deck (premium users only).
         
@@ -1191,35 +1210,13 @@ class ApiClient:
             title: Deck title (3-100 characters)
             description: Deck description (max 2000 characters)
             bar_subject: Optional bar subject category
-            is_public: Whether deck is publicly visible (default True)
+            is_public: Whether deck is publicly visible
             tags: Optional list of tags (max 20, 50 chars each)
         
         Returns:
-            {
-                "success": true,
-                "deck": {
-                    "id": "uuid",
-                    "title": "My Deck",
-                    "description": "...",
-                    "bar_subject": "political_law",
-                    "is_public": true,
-                    "is_verified": false,
-                    "card_count": 0,
-                    "subscriber_count": 0,
-                    "version": "1.0.0",
-                    "created_at": "2024-12-18T10:00:00Z"
-                }
-            }
-        
-        Errors:
-            403: Premium subscription required
-            400: Title validation failed
+            {"success": true, "deck": {...}}
         """
-        body = {
-            "title": title,
-            "description": description,
-            "is_public": is_public
-        }
+        body = {"title": title, "description": description, "is_public": is_public}
         if bar_subject:
             body["bar_subject"] = bar_subject
         if tags:
@@ -1227,12 +1224,15 @@ class ApiClient:
         
         return self.post("/addon-create-deck", json_body=body)
 
-    def update_deck(self, deck_id: str, 
-                    title: Optional[str] = None,
-                    description: Optional[str] = None,
-                    bar_subject: Optional[str] = None,
-                    is_public: Optional[bool] = None,
-                    tags: Optional[List[str]] = None) -> Any:
+    def update_deck(
+        self, 
+        deck_id: str, 
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        bar_subject: Optional[str] = None,
+        is_public: Optional[bool] = None,
+        tags: Optional[List[str]] = None
+    ) -> Any:
         """
         Update metadata for a collaborative deck you created.
         
@@ -1240,16 +1240,12 @@ class ApiClient:
             deck_id: UUID of the deck to update
             title: New title (optional)
             description: New description (optional)
-            bar_subject: New bar subject category (optional)
+            bar_subject: New bar subject (optional)
             is_public: Update visibility (optional)
             tags: New tags list (optional)
         
         Returns:
             {"success": true, "deck": {...}}
-        
-        Errors:
-            403: Not authorized (not deck creator)
-            404: Deck not found
         """
         body = {"deck_id": deck_id}
         if title is not None:
@@ -1274,53 +1270,37 @@ class ApiClient:
             confirm: Must be True to confirm deletion
         
         Returns:
-            {
-                "success": true,
-                "message": "Deck deleted successfully",
-                "cards_deleted": 150,
-                "subscribers_removed": 25
-            }
-        
-        Errors:
-            400: Confirmation required (confirm=False)
-            403: Not authorized (not deck creator)
-            404: Deck not found
+            {"success": true, "cards_deleted": 150, "subscribers_removed": 25}
         """
-        return self.post("/addon-delete-user-deck", 
-                        json_body={"deck_id": deck_id, "confirm": confirm})
+        return self.post("/addon-delete-user-deck", json_body={
+            "deck_id": deck_id,
+            "confirm": confirm
+        })
 
-    def push_deck_cards(self, deck_id: str, cards: List[Dict],
-                        delete_missing: bool = False,
-                        version: Optional[str] = None,
-                        timeout: int = 60) -> Any:
+    def push_deck_cards(
+        self, 
+        deck_id: str, 
+        cards: List[Dict],
+        delete_missing: bool = False,
+        version: Optional[str] = None,
+        timeout: int = 120
+    ) -> Any:
         """
-        Push cards from Anki Desktop to your collaborative deck.
+        Push cards from Anki to your collaborative deck.
         
         Args:
             deck_id: UUID of your collaborative deck
             cards: List of card objects (max 500 per request)
-                   Each card: {card_guid, note_type, fields, tags, subdeck_path}
-            delete_missing: If True, delete cards not in the provided list
+            delete_missing: If True, delete cards not in provided list
             version: Semantic version (auto-increments if not provided)
-            timeout: Request timeout in seconds (default 60)
+            timeout: Request timeout (default 120s)
         
         Returns:
             {
                 "success": true,
                 "version": "1.0.1",
-                "stats": {
-                    "cards_processed": 100,
-                    "cards_added": 10,
-                    "cards_modified": 5,
-                    "cards_deleted": 2,
-                    "total_cards": 157
-                }
+                "stats": {"cards_added": 10, "cards_modified": 5, ...}
             }
-        
-        Errors:
-            400: Too many cards (max 500) or validation errors
-            403: Not authorized (not deck creator)
-            404: Deck not found
         """
         if len(cards) > 500:
             raise ValueError("Maximum 500 cards per request (per API spec)")
@@ -1340,23 +1320,7 @@ class ApiClient:
         Returns:
             {
                 "success": true,
-                "decks": [
-                    {
-                        "id": "uuid",
-                        "title": "My Constitutional Law Notes",
-                        "description": "...",
-                        "bar_subject": "political_law",
-                        "card_count": 157,
-                        "subscriber_count": 25,
-                        "is_public": true,
-                        "is_verified": false,
-                        "version": "1.0.1",
-                        "tags": ["political", "law"],
-                        "image_url": "...",
-                        "created_at": "2024-12-01T10:00:00Z",
-                        "updated_at": "2024-12-18T10:30:00Z"
-                    }
-                ],
+                "decks": [...],
                 "can_create_more": true,
                 "created_decks_count": 3,
                 "max_decks": 10
@@ -1365,20 +1329,22 @@ class ApiClient:
         return self.post("/addon-get-my-decks", json_body={})
 
 
-# === TOKEN MANAGEMENT HELPERS ===
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
 
 def check_token_expiry(expires_at_str: Optional[str]) -> bool:
     """
-    Check if a token has expired
+    Check if a token has expired.
     
     Args:
         expires_at_str: ISO format timestamp string
     
     Returns:
-        True if token is expired, False if still valid or can't determine
+        True if token is expired, False if still valid
     """
     if not expires_at_str:
-        return False  # Assume valid if no expiry set
+        return False  # No expiry = assume valid
     
     try:
         expiry = datetime.fromisoformat(expires_at_str.replace('Z', '+00:00'))
@@ -1389,31 +1355,36 @@ def check_token_expiry(expires_at_str: Optional[str]) -> bool:
         return False  # Assume valid if can't parse
 
 
-# === GLOBAL INSTANCE ===
+# ============================================================================
+# GLOBAL INSTANCE
+# ============================================================================
 
-# Single shared instance
+# Single shared API client instance
 api = ApiClient()
 
 
 def set_access_token(token: Optional[str]) -> None:
-    """Set the access token for API requests with validation"""
+    """
+    Set the access token for API requests with validation.
+    
+    Args:
+        token: Access token string or None to clear
+    
+    Raises:
+        ValueError: If token format is invalid
+    """
     if token:
-        # Basic token format validation
+        # Validate token format
         if not isinstance(token, str):
-            logger.error("Invalid token type - must be string")
-            return
+            raise ValueError("Token must be a string")
         
         if len(token) < MIN_TOKEN_LENGTH:
-            logger.warning("Token validation: token appears invalid")
-            # Still set it, but warn
+            raise ValueError(f"Token too short (minimum {MIN_TOKEN_LENGTH} characters)")
         
         api.access_token = token
-        # Secure logging
-        if len(token) > 10:
-            masked = f"{token[:4]}...{token[-4:]}"
-            logger.info(f"✓ Access token set ({masked})")
-        else:
-            logger.info("✓ Access token set")
+        # Secure logging (don't log full token)
+        masked = f"{token[:4]}...{token[-4:]}" if len(token) > 10 else "***"
+        logger.info(f"✓ Access token set ({masked})")
     else:
         api.access_token = None
         logger.info("✓ Access token cleared")
@@ -1424,43 +1395,44 @@ def ensure_valid_token() -> bool:
     Ensure we have a valid access token, refreshing if needed.
     
     Returns:
-        True if we have a valid token (either existing or refreshed)
+        True if we have a valid token (existing or refreshed)
     """
     token = config.get_access_token()
     if not token:
         set_access_token(None)
         return False
-        
+    
     # Check expiry
     expires_at = config.get_token_expiry()
-    
-    # Needs explicit import or check if _is_token_expired is available in scope
-    # It is defined above in this file as check_token_expiry
     if not check_token_expiry(expires_at):
+        # Token still valid
         set_access_token(token)
         return True
-        
-    # Token expired, try refresh
+    
+    # Token expired - try refresh
     refresh_token = config.get_refresh_token()
-    if refresh_token:
-        try:
-            logger.info("Access token expired, attempting refresh...")
-            result = api.refresh_access_token(refresh_token)
-            if result.get('success'):
-                new_token = result.get('access_token')
-                new_refresh = result.get('refresh_token', refresh_token)
-                new_expires = result.get('expires_at')
-                
-                if new_token:
-                    config.save_tokens(new_token, new_refresh, new_expires)
-                    set_access_token(new_token)
-                    logger.info("Token refreshed successfully")
-                    return True
-        except Exception as e:
-            logger.error(f"Token refresh failed: {e}")
+    if not refresh_token:
+        logger.warning("Token expired and no refresh token available")
+        return False
+    
+    try:
+        logger.info("Access token expired, attempting refresh...")
+        result = api.refresh_access_token(refresh_token)
+        
+        if result.get('success'):
+            new_token = result.get('access_token')
+            new_refresh = result.get('refresh_token', refresh_token)
+            new_expires = result.get('expires_at')
             
-    # Refresh failed or no refresh token
-    logger.warning("Token expired and refresh failed")
-    # Don't clear immediately, let API return 401? 
-    # But ensure_valid_token implies we know it's invalid.
-    return False
+            if new_token:
+                config.save_tokens(new_token, new_refresh, new_expires)
+                set_access_token(new_token)
+                logger.info("✓ Token refreshed successfully")
+                return True
+        
+        logger.error("Token refresh failed: no access token in response")
+        return False
+        
+    except Exception as e:
+        logger.error(f"Token refresh failed: {e}", exc_info=True)
+        return False
