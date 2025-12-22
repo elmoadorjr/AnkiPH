@@ -4,7 +4,7 @@ ENHANCED: Added update checking, notifications, and AnkiHub-parity endpoints
 ENHANCED: Added subscription-only access support (subscriber, free tier)
 ENHANCED: Added subscription management and v3.0 API alignment
 FIXED: Token validation, better error handling, no retry on auth errors
-Version: 3.3.2
+Version: 4.0.0
 """
 
 from __future__ import annotations
@@ -215,8 +215,6 @@ class ApiClient:
                     try:
                         refresh_token = config.get_refresh_token()
                         if refresh_token:
-                            # Use separate client instance or direct call to avoid recursion issues if any
-                            # But since refresh_token() uses require_auth=False, it should be safe.
                             new_tokens = self.refresh_token(refresh_token)
                             
                             if new_tokens and new_tokens.get("access_token"):
@@ -229,16 +227,15 @@ class ApiClient:
                                 headers = self._headers(include_auth=True)
                                 logger.info("Token refreshed successfully. Retrying request...")
                                 continue
+                            else:
+                                logger.warning("Refresh returned no tokens. Stopping retry.")
                     except Exception as refresh_err:
                         logger.error(f"Token refresh failed: {refresh_err}")
-                        # Fall through to standard auth failure handling
                 
                 # Don't retry auth errors (401, 403) if refresh failed or not applicable
                 if e.status_code and e.status_code in (401, 403):
                     logger.error(f"Authentication error: {e}")
                     # Clear tokens immediately on auth failure
-                    mask_token = (self.access_token[:10] + "...") if self.access_token else "None"
-                    logger.info(f"Clearing invalid tokens due to {e.status_code} error. Token was: {mask_token}")
                     config.clear_tokens()
                     self.access_token = None
                     raise
@@ -250,7 +247,6 @@ class ApiClient:
                     time.sleep(wait_time)
                     retries += 1
                 else:
-                    # Other client errors (400, 404, etc.) - don't retry
                     raise
             except Exception as e:
                 # Network errors - retry with backoff
@@ -333,21 +329,6 @@ class ApiClient:
                         details=raw[:500]
                     )
                 
-                if resp.getcode() == 429:
-                    headers = dict(resp.info())
-                    retry_after = 60
-                    try:
-                        retry_after = int(headers.get('Retry-After', 60))
-                    except (ValueError, TypeError):
-                        pass
-                        
-                    err_msg = data.get("error") if isinstance(data, dict) else "Rate limit exceeded"
-                    raise AnkiPHRateLimitError(
-                        f"{err_msg}. Retry in {retry_after} seconds.",
-                        retry_after=retry_after,
-                        details=data
-                    )
-
                 if resp.getcode() >= 400:
                     err_msg = data.get("error") if isinstance(data, dict) else None
                     raise AnkiPHAPIError(

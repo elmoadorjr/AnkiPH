@@ -1,7 +1,7 @@
 {
   "package": "AnkiPH_Addon",
   "name": "AnkiPH",
-  "version": "3.3.2",
+  "version": "4.0.0",
   "author": "AnkiPH Team",
   "homepage": "https://ankiph.lovable.app",
   "conflicts": [],

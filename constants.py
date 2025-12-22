@@ -1,12 +1,12 @@
 """
 Central constants for AnkiPH Addon
 Single source of truth for version, URLs, and configuration
-Version: 3.3.0 - Subscription-only model
+Version: 4.0.0 - Subscription-only model
 """
 
 # Addon Info
 ADDON_NAME = "AnkiPH"
-ADDON_VERSION = "3.3.2"
+ADDON_VERSION = "4.0.0"
 
 # Base URLs - Use primary domain for all features
 BASE_URL = "https://ankiph.lovable.app"
