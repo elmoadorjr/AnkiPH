@@ -1,4 +1,10 @@
-from typing import List, Dict, Any, Optional
+"""
+Batch upload helper for AnkiPH addon
+Handles batched data uploads to the API
+Version: 4.0.0
+"""
+
+from typing import List, Dict, Any
 from .logger import logger
 from .constants import API_BATCH_SIZE, API_MAX_BATCH_SIZE
 

@@ -17,7 +17,7 @@ class Config:
     """Manages addon configuration and authentication state"""
     
     def __init__(self):
-        self.addon_name = "AnkiPH_addon"
+        self.addon_name = "AnkiPH_Addon"
         self._config_cache = None
         self._cache_timestamp = 0
         self._cache_timeout = 1.0  # 1 second cache

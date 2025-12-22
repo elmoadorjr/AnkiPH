@@ -5,8 +5,15 @@ Version: 4.0.0 - Fixed GUID search and error handling
 """
 
 import os
-import requests
 from typing import Dict, List, Optional, Any
+
+# HTTP Library Detection (matches api_client.py)
+try:
+    import requests
+    _HAS_REQUESTS = True
+except ImportError:
+    import urllib.request as _urllib_request
+    _HAS_REQUESTS = False
 from aqt import mw
 from aqt.operations import QueryOp
 from aqt.utils import showInfo
@@ -120,6 +127,8 @@ def _sync_note_types(note_types: List[Dict]):
 
 def _sync_media_files(media_files: Any):
     """Download missing media files"""
+    from .constants import DOWNLOAD_TIMEOUT_SECONDS
+    
     # Handle list of dicts or dict of filename:url
     if isinstance(media_files, dict):
         items = media_files.items()
@@ -139,9 +148,14 @@ def _sync_media_files(media_files: Any):
             # Download
             logger.debug(f"Downloading media: {filename}")
             if hasattr(url, 'startswith') and url.startswith('http'):
-                 r = requests.get(url, timeout=30)
-                 if r.status_code == 200:
-                     mw.col.media.write_data(filename, r.content)
+                if _HAS_REQUESTS:
+                    r = requests.get(url, timeout=DOWNLOAD_TIMEOUT_SECONDS)
+                    if r.status_code == 200:
+                        mw.col.media.write_data(filename, r.content)
+                else:
+                    # Fallback to urllib
+                    with _urllib_request.urlopen(url, timeout=DOWNLOAD_TIMEOUT_SECONDS) as resp:
+                        mw.col.media.write_data(filename, resp.read())
         except Exception as e:
             logger.warning(f"Failed to download media {filename}: {e}")
 
@@ -302,36 +316,45 @@ def import_deck_with_progress(deck_data_provider, deck_name: str,
 
 # Keep existing utility functions for compatibility/utility
 def get_deck_stats(deck_id: int) -> dict:
-    """Get statistics for a deck"""
+    """Get statistics for a deck using optimized SQL query"""
     try:
         deck_id = int(deck_id)
         deck = mw.col.decks.get(deck_id)
         if not deck: 
             return {}
         
-        card_ids = mw.col.decks.cids(deck_id, children=True)
-        total = len(card_ids)
-        new_c = learning_c = review_c = 0
+        # Get all deck IDs (including children)
+        deck_ids = [deck_id] + [d[1] for d in mw.col.decks.children(deck_id)]
         
-        for cid in card_ids:
-            try:
-                c = mw.col.get_card(cid)
-                if c.type == 0: 
-                    new_c += 1
-                elif c.type == 1: 
-                    learning_c += 1
-                elif c.type == 2: 
-                    review_c += 1
-            except Exception as e:
-                logger.debug(f"Error getting card {cid}: {e}")
-                continue
-            
+        # Use SQL aggregation for efficiency (single query instead of N+1)
+        placeholders = ",".join("?" * len(deck_ids))
+        query = f"""
+            SELECT 
+                COUNT(*) as total,
+                SUM(CASE WHEN type = 0 THEN 1 ELSE 0 END) as new_cards,
+                SUM(CASE WHEN type = 1 THEN 1 ELSE 0 END) as learning_cards,
+                SUM(CASE WHEN type = 2 THEN 1 ELSE 0 END) as review_cards
+            FROM cards
+            WHERE did IN ({placeholders})
+        """
+        
+        result = mw.col.db.first(query, *deck_ids)
+        
+        if not result:
+            return {
+                'name': deck['name'],
+                'total_cards': 0,
+                'new_cards': 0,
+                'learning_cards': 0,
+                'review_cards': 0
+            }
+        
         return {
             'name': deck['name'],
-            'total_cards': total,
-            'new_cards': new_c,
-            'learning_cards': learning_c,
-            'review_cards': review_c
+            'total_cards': result[0] or 0,
+            'new_cards': result[1] or 0,
+            'learning_cards': result[2] or 0,
+            'review_cards': result[3] or 0
         }
     except Exception as e:
         logger.error(f"Error getting deck stats for {deck_id}: {e}")

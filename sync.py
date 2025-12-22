@@ -1,8 +1,8 @@
 """
 Progress syncing for the AnkiPH addon
 Syncs study progress to the server
-Updated for v3.0 API with improved field names and single-deck support
-Version: 3.0.0
+Updated for v4.0 API with improved field names and single-deck support
+Version: 4.0.0
 """
 
 from aqt import mw

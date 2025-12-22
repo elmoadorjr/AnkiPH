@@ -291,6 +291,9 @@ class ApiClient:
         """
         url = self._full_url(path)
         
+        # Reset refresh flag for each new request (allows retry on new 401s)
+        self._refresh_attempted = False
+        
         # Log request (debug level)
         logger.debug(
             f"POST {path} "
@@ -401,10 +404,9 @@ class ApiClient:
                 
                 if new_tokens and new_tokens.get("access_token"):
                     self.access_token = new_tokens["access_token"]
-                    config.set_tokens(
-                        self.access_token, 
-                        new_tokens.get("refresh_token") or refresh_token
-                    )
+                    new_refresh = new_tokens.get("refresh_token") or refresh_token
+                    new_expires = new_tokens.get("expires_at")
+                    config.save_tokens(self.access_token, new_refresh, new_expires)
                     logger.info("✓ Token refreshed successfully")
                     self._refresh_attempted = True
                     return True

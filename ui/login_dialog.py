@@ -1,7 +1,7 @@
 """
 Login Dialog for AnkiPH Addon
 Modern Premium Login UI - Stable Version
-Version: 5.3.0 - Final polish with proper styling
+Version: 4.0.0
 """
 
 import webbrowser
