@@ -1,7 +1,7 @@
 """
 Update checking service for AnkiPH addon
 Checks for deck updates in the background and notifies users
-Version: 2.1.1 - Fixed auto_apply_updates
+Version: 2.2.0 - Fixed token expiry handling
 """
 
 import threading
@@ -73,8 +73,26 @@ class UpdateChecker:
                     showInfo("Please login first to check for updates.")
                 return None
             
-            # Set access token
+            # Try to refresh token if needed
             token = config.get_access_token()
+            refresh_token = config.get_refresh_token()
+            
+            if refresh_token:
+                try:
+                    result = api.refresh_token(refresh_token)
+                    if result.get('success'):
+                        new_token = result.get('access_token')
+                        new_refresh = result.get('refresh_token', refresh_token)
+                        expires_at = result.get('expires_at')
+                        
+                        if new_token:
+                            config.save_tokens(new_token, new_refresh, expires_at)
+                            token = new_token
+                            logger.info("Token refreshed successfully for update check")
+                except Exception as e:
+                    logger.warning(f"Token refresh failed (will try with existing): {e}")
+            
+            # Set access token
             set_access_token(token)
             
             if not silent:
@@ -302,7 +320,23 @@ class UpdateChecker:
         
         for deck_id, update_info in updates.items():
             try:
-                # Set access token before each download attempt
+                # Refresh token before each download
+                refresh_token = config.get_refresh_token()
+                if refresh_token:
+                    try:
+                        result = api.refresh_token(refresh_token)
+                        if result.get('success'):
+                            new_token = result.get('access_token')
+                            new_refresh = result.get('refresh_token', refresh_token)
+                            expires_at = result.get('expires_at')
+                            
+                            if new_token:
+                                config.save_tokens(new_token, new_refresh, expires_at)
+                                set_access_token(new_token)
+                    except Exception as e:
+                        logger.warning(f"Token refresh failed during auto-update: {e}")
+                
+                # Set access token
                 token = config.get_access_token()
                 if not token:
                     logger.error("No access token available for auto-update")
