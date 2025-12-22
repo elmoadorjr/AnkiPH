@@ -184,3 +184,12 @@
 2025-12-22 20:50:42 - AnkiPH - INFO - Refreshing expired access token...
 2025-12-22 20:50:44 - AnkiPH - INFO - ✓ Token refreshed successfully
 2025-12-22 20:50:44 - AnkiPH - INFO - Token refreshed, retrying /addon-browse-decks
+2025-12-22 21:01:29 - AnkiPH - INFO - ✓ Access token set (eyJh..._4FY)
+2025-12-22 21:01:29 - AnkiPH - INFO - AnkiPH v4.0.0 ready
+2025-12-22 21:01:29 - AnkiPH - INFO - DEBUG: Entering load_decks (Network Sync DISABLED)
+2025-12-22 21:01:29 - AnkiPH - INFO - DEBUG: Accessing mw.col.decks
+2025-12-22 21:01:29 - AnkiPH - INFO - DEBUG: Found 1788 local decks
+2025-12-22 21:01:29 - AnkiPH - INFO - DEBUG: Entering item loop - PRE-LOOP
+2025-12-22 21:01:29 - AnkiPH - INFO - DEBUG: downloaded_decks has 2 keys
+2025-12-22 21:01:29 - AnkiPH - INFO - DEBUG: Iterating deck adc78e04-dd8c-40b5-857c-7ee0c214c8f5
+2025-12-22 21:01:29 - AnkiPH - INFO - DEBUG: Iterating deck e857a9e5-4f15-43ec-beb9-8cbf034d811b
