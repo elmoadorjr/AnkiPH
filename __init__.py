@@ -1,7 +1,6 @@
 """
-AnkiPH Anki Addon - Simplified Version
-PyQt6 Compatible - v3.3.2
-SIMPLIFIED: Subscription-only model, auto-sync on startup
+AnkiPH Anki Addon
+v4.0.0 - Subscription-based deck sync for Philippine bar exam prep
 """
 
 from aqt import mw, gui_hooks
@@ -9,177 +8,190 @@ from aqt.qt import QAction
 from aqt.utils import showInfo, tooltip
 import threading
 
-# Global reference to prevent garbage collection
-_dialog_instance = None
+
+# ============================================================================
+# GLOBALS
+# ============================================================================
+
+_dialog = None  # Singleton dialog instance
 _dialog_lock = threading.Lock()
+_initialized = False
 
-# Initialize logger as None first
+# Lazy-loaded modules (import on first use)
 logger = None
+config = None
+update_checker = None
 
-try:
-    # Import logger FIRST before anything else
-    from .logger import logger
+
+# ============================================================================
+# INITIALIZATION
+# ============================================================================
+
+def _init():
+    """Load dependencies lazily on first menu click"""
+    global logger, config, update_checker, _initialized
     
-    from .config import config
-    from . import sync
-    from .api_client import api, set_access_token
-    from .update_checker import update_checker
-    from .constants import ADDON_NAME, ADDON_VERSION
+    if _initialized:
+        return True
     
-    # Use simplified main dialog (v3.0.0)
-    from .ui.main_dialog import AnkiPHMainDialog as MainDialog
-    from .ui.login_dialog import show_login_dialog
+    try:
+        from .logger import logger as _log
+        from .config import config as _cfg
+        from .update_checker import update_checker as _upd
+        from .api_client import set_access_token
+        from .constants import ADDON_VERSION
         
-except ImportError as e:
-    _import_error = str(e)
-    
-    def show_startup_error():
-        try:
-            from aqt.utils import showInfo
-            showInfo(f"AnkiPH addon import error: {_import_error}\n\nPlease check that all files are present.")
-        except Exception:
-            print(f"✗ AnkiPH import error: {_import_error}")
-    
-    try:
-        from aqt import gui_hooks
-        gui_hooks.main_window_did_init.append(show_startup_error)
-    except Exception:
-        print(f"✗ Fatal AnkiPH import error: {_import_error}")
+        logger, config, update_checker = _log, _cfg, _upd
+        
+        # Restore auth token if logged in
+        if token := config.get_access_token():
+            set_access_token(token)
+        
+        logger.info(f"AnkiPH v{ADDON_VERSION} ready")
+        _initialized = True
+        return True
+        
+    except ImportError as e:
+        print(f"✗ AnkiPH load failed: {e}")
+        return False
 
 
-def show_settings_dialog():
-    """Show settings dialog"""
-    try:
-        from .ui.settings_dialog import SettingsDialog
-        dialog = SettingsDialog(mw)
-        dialog.exec()
-    except Exception as e:
-        showInfo(f"Error opening settings:\n{str(e)}")
-        if logger:
-            logger.exception(f"Settings dialog error: {e}")
+# ============================================================================
+# MENU ACTION
+# ============================================================================
 
-
-def on_menu_action(*args):
-    """Smart menu action: Login -> Main Dialog"""
-    try:
-        if not config.is_logged_in():
-            if show_login_dialog(mw):
-                show_main_dialog()
-        else:
-            show_main_dialog()
-            
-    except Exception as e:
-        showInfo(f"Error opening AnkiPH:\n{str(e)}")
-        if logger:
-            logger.exception(f"Menu action error: {e}")
-
-
-def show_main_dialog():
-    """Show main dialog (thread-safe)"""
-    global _dialog_instance
-    
-    with _dialog_lock:
-        # Check if dialog already exists and is visible
-        if _dialog_instance and not _dialog_instance.isHidden():
-            _dialog_instance.raise_()
-            _dialog_instance.activateWindow()
-            return
-
-        try:
-            _dialog_instance = MainDialog(mw)
-            _dialog_instance.finished.connect(lambda: _on_dialog_finished())
-            _dialog_instance.show()
-            
-        except Exception as e:
-            showInfo(f"Error opening AnkiPH dialog:\n{str(e)}")
-            if logger:
-                logger.exception(f"Dialog error: {e}")
-            _dialog_instance = None
-
-
-def _on_dialog_finished():
-    """Cleanup when dialog is closed"""
-    global _dialog_instance
-    _dialog_instance = None
-    
-    if config.is_logged_in():
-        try:
-            token = config.get_access_token()
-            if token:
-                set_access_token(token)
-            sync.sync_progress()
-            if logger:
-                logger.info("Progress synced successfully after dialog close")
-        except Exception as e: 
-            if logger:
-                logger.warning(f"Sync failed (non-critical): {e}")
-
-
-def _auto_apply_updates_background():
-    """Auto-apply updates in background thread"""
-    try:
-        update_checker.auto_apply_updates()
-    except Exception as e:
-        if logger:
-            logger.warning(f"Auto-apply updates failed (non-critical): {e}")
-
-
-def on_main_window_did_init():
-    """Called when Anki's main window finishes initializing"""
-    if not config.is_logged_in():
-        if logger:
-            logger.debug("Skipping startup tasks - user not logged in")
+def _on_menu_click(*_):
+    """Handle menu bar click: show login or main dialog"""
+    if not _init():
+        showInfo("AnkiPH failed to load. Please reinstall.")
         return
     
     try:
-        token = config.get_access_token()
-        if token:
-            set_access_token(token)
+        from .ui.login_dialog import show_login_dialog
         
+        if config.is_logged_in():
+            _show_dialog()
+        elif show_login_dialog(mw):
+            _show_dialog()
+            
+    except Exception as e:
+        showInfo(f"Error: {e}")
+        logger and logger.exception("Menu click failed")
+
+
+# ============================================================================
+# DIALOG MANAGEMENT
+# ============================================================================
+
+def _show_dialog():
+    """Show main dialog (singleton, thread-safe)"""
+    global _dialog
+    
+    with _dialog_lock:
+        # Reuse if already open
+        if _dialog and not _dialog.isHidden():
+            _dialog.raise_()
+            _dialog.activateWindow()
+            return
+        
+        try:
+            from .ui.main_dialog import AnkiPHMainDialog
+            _dialog = AnkiPHMainDialog(mw)
+            _dialog.finished.connect(_on_dialog_close)
+            _dialog.show()
+            
+        except Exception as e:
+            showInfo(f"Dialog error: {e}")
+            logger and logger.exception("Dialog creation failed")
+            _dialog = None
+
+
+def _on_dialog_close():
+    """Cleanup after dialog closes, sync progress in background"""
+    global _dialog
+    _dialog = None
+    
+    if config and config.is_logged_in():
+        threading.Thread(
+            target=_sync_progress,
+            daemon=True,
+            name="AnkiPH-Sync"
+        ).start()
+
+
+def _sync_progress():
+    """Background: Sync study progress to server"""
+    try:
+        from . import sync
+        from .api_client import set_access_token
+        
+        if token := config.get_access_token():
+            set_access_token(token)
+            sync.sync_progress()
+            logger and logger.info("Progress synced")
+            
+    except Exception as e:
+        logger and logger.warning(f"Sync failed: {e}")
+
+
+# ============================================================================
+# STARTUP HOOK
+# ============================================================================
+
+def _on_startup():
+    """Auto-check for deck updates on Anki launch"""
+    if not _init() or not config.is_logged_in():
+        return
+    
+    threading.Thread(
+        target=_check_updates,
+        daemon=True,
+        name="AnkiPH-Startup"
+    ).start()
+
+
+def _check_updates():
+    """Background: Check and auto-apply deck updates"""
+    try:
         updates = update_checker.check_for_updates(silent=True)
         
-        if updates and len(updates) > 0:
-            count = len(updates)
-            tooltip(f"⚖️ AnkiPH: {count} deck update(s) available")
+        if updates:
+            tooltip(f"⚖️ AnkiPH: {len(updates)} update(s) available", period=3000)
+            update_checker.auto_apply_updates()
             
-            # Apply updates in background thread to avoid blocking UI
-            threading.Thread(
-                target=_auto_apply_updates_background,
-                daemon=True,
-                name="AnkiPH-AutoUpdate"
-            ).start()
-                
     except Exception as e:
-        if logger:
-            logger.warning(f"AnkiPH startup check failed (non-critical): {e}")
+        logger and logger.warning(f"Update check failed: {e}")
 
 
-def setup_menu():
-    """Setup menu in Anki - direct action in menu bar next to Help"""
+# ============================================================================
+# ANKI INTEGRATION
+# ============================================================================
+
+def _setup_menu():
+    """Add AnkiPH menu item (before Help menu)"""
     try:
-        action = QAction(f"⚖️ AnkiPH", mw)
-        action.triggered.connect(on_menu_action)
+        action = QAction("⚖️ AnkiPH", mw)
+        action.triggered.connect(_on_menu_click)
         
-        menubar = mw.form.menubar
-        help_menu = mw.form.menuHelp
-        menubar.insertAction(help_menu.menuAction(), action)
-        
-        if logger:
-            logger.info(f"AnkiPH addon v{ADDON_VERSION} loaded successfully")
-            logger.info(f"Auto-update check: {config.get_auto_check_updates()}")
+        mw.form.menubar.insertAction(
+            mw.form.menuHelp.menuAction(), 
+            action
+        )
+        print("✓ AnkiPH loaded")
         
     except Exception as e:
-        if logger:
-            logger.error(f"Error setting up AnkiPH menu: {e}")
-        showInfo(f"AnkiPH addon failed to load:\n{str(e)}")
+        print(f"✗ AnkiPH menu failed: {e}")
+        showInfo(f"Failed to load AnkiPH:\n{e}")
 
 
-# Setup hooks
+# ============================================================================
+# ENTRY POINT
+# ============================================================================
+
 try:
-    setup_menu()
-    gui_hooks.main_window_did_init.append(on_main_window_did_init)
+    _setup_menu()
+    gui_hooks.main_window_did_init.append(_on_startup)
+    
 except Exception as e:
-    print(f"✗ Fatal error loading AnkiPH addon: {e}")
-    if logger:
-        logger.exception("Fatal addon load error")
-    showInfo(f"Fatal error loading AnkiPH addon:\n{str(e)}")
+    print(f"✗ Fatal AnkiPH error: {e}")
+    showInfo(f"AnkiPH failed to load:\n{e}")
