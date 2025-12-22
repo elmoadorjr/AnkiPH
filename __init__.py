@@ -51,9 +51,12 @@ def _init():
         _initialized = True
         return True
         
-    except ImportError as e:
-        print(f"✗ AnkiPH load failed: {e}")
-        return False
+    except Exception as e:
+        # Log full traceback for debugging
+        import traceback
+        error_detail = traceback.format_exc()
+        print(f"✗ AnkiPH failed to load:\n{error_detail}")
+        return False  # Caller decides whether to show UI error
 
 
 # ============================================================================
@@ -63,7 +66,14 @@ def _init():
 def _on_menu_click(*_):
     """Handle menu bar click: show login or main dialog"""
     if not _init():
-        showInfo("AnkiPH failed to load. Please reinstall.")
+        # Only show error dialog on explicit user action
+        showInfo(
+            "AnkiPH failed to load.\n\n"
+            "Possible causes:\n"
+            "• Missing addon files\n"
+            "• Corrupted installation\n\n"
+            "Please reinstall from AnkiWeb."
+        )
         return
     
     try:
@@ -77,6 +87,19 @@ def _on_menu_click(*_):
     except Exception as e:
         showInfo(f"Error: {e}")
         logger and logger.exception("Menu click failed")
+
+
+# ============================================================================
+# UTILITIES
+# ============================================================================
+
+def _run_background(target, name):
+    """Launch background thread with consistent settings"""
+    threading.Thread(
+        target=target,
+        daemon=True,
+        name=f"AnkiPH-{name}"
+    ).start()
 
 
 # ============================================================================
@@ -103,7 +126,7 @@ def _show_dialog():
         except Exception as e:
             showInfo(f"Dialog error: {e}")
             logger and logger.exception("Dialog creation failed")
-            _dialog = None
+            _dialog = None  # Ensure cleanup on failure
 
 
 def _on_dialog_close():
@@ -112,11 +135,7 @@ def _on_dialog_close():
     _dialog = None
     
     if config and config.is_logged_in():
-        threading.Thread(
-            target=_sync_progress,
-            daemon=True,
-            name="AnkiPH-Sync"
-        ).start()
+        _run_background(_sync_progress, "Sync")
 
 
 def _sync_progress():
@@ -125,6 +144,7 @@ def _sync_progress():
         from . import sync
         from .api_client import set_access_token
         
+        # Thread-safe read of token (config handles locking internally)
         if token := config.get_access_token():
             set_access_token(token)
             sync.sync_progress()
@@ -143,11 +163,7 @@ def _on_startup():
     if not _init() or not config.is_logged_in():
         return
     
-    threading.Thread(
-        target=_check_updates,
-        daemon=True,
-        name="AnkiPH-Startup"
-    ).start()
+    _run_background(_check_updates, "Startup")
 
 
 def _check_updates():
@@ -170,6 +186,10 @@ def _check_updates():
 def _setup_menu():
     """Add AnkiPH menu item (before Help menu)"""
     try:
+        import sys
+        import platform
+        from .constants import ADDON_VERSION
+        
         action = QAction("⚖️ AnkiPH", mw)
         action.triggered.connect(_on_menu_click)
         
@@ -177,7 +197,14 @@ def _setup_menu():
             mw.form.menuHelp.menuAction(), 
             action
         )
-        print("✓ AnkiPH loaded")
+        
+        # Health logging
+        print(
+            f"✓ AnkiPH v{ADDON_VERSION} loaded\n"
+            f"  Python {sys.version.split()[0]} | "
+            f"Anki {mw.appVersion if hasattr(mw, 'appVersion') else 'unknown'} | "
+            f"{platform.system()}"
+        )
         
     except Exception as e:
         print(f"✗ AnkiPH menu failed: {e}")
