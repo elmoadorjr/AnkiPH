@@ -305,7 +305,7 @@ class UpdateChecker:
                 refresh_token = config.get_refresh_token()
                 if refresh_token:
                     try:
-                        result = api.refresh_token(refresh_token)
+                        result = api.refresh_access_token(refresh_token)
                         if result.get('success'):
                             new_token = result.get('access_token')
                             new_refresh = result.get('refresh_token', refresh_token)
