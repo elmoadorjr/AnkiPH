@@ -94,7 +94,7 @@ class AnkiPHMainDialog(QDialog):
         layout.setContentsMargins(15, 12, 15, 12)
         
         # Browse Decks button (primary)
-        browse_btn = QPushButton("🔗 Browse Decks")
+        browse_btn = QPushButton("Browse Decks")
         browse_btn.setObjectName("primaryBtn")
         browse_btn.clicked.connect(self.browse_decks)
         layout.addWidget(browse_btn)
@@ -218,7 +218,7 @@ class AnkiPHMainDialog(QDialog):
         layout.addWidget(self.install_status)
         
         # Sync/Install button
-        self.sync_btn = QPushButton("🔄 Sync to Install")
+        self.sync_btn = QPushButton("ðŸ”„ Sync to Install")
         self.sync_btn.setObjectName("syncBtn")
         self.sync_btn.clicked.connect(self.sync_install_deck)
         self.sync_btn.setVisible(False)
@@ -435,6 +435,7 @@ class AnkiPHMainDialog(QDialog):
             #statusBar {{
                 background-color: {COLORS["bg_tertiary"]};
                 border-top: 1px solid {COLORS["border"]};
+                max-height: 44px;
             }}
             
             #statusText {{
@@ -445,19 +446,23 @@ class AnkiPHMainDialog(QDialog):
             #subscriptionBadge {{
                 background-color: {COLORS["success"]};
                 color: white;
-                padding: 4px 12px;
-                border-radius: 12px;
+                padding: 3px 10px;
+                border-radius: 10px;
                 font-size: 10px;
                 font-weight: bold;
+                max-height: 20px;
+                min-height: 16px;
             }}
             
             #freeBadge {{
                 background-color: {COLORS["warning"]};
                 color: white;
-                padding: 4px 12px;
-                border-radius: 12px;
+                padding: 3px 10px;
+                border-radius: 10px;
                 font-size: 10px;
                 font-weight: bold;
+                max-height: 20px;
+                min-height: 16px;
             }}
             
             #linkBtn {{
@@ -469,6 +474,14 @@ class AnkiPHMainDialog(QDialog):
             }}
             #linkBtn:hover {{
                 color: {COLORS["btn_primary_hover"]};
+            }}
+            
+            QSplitter::handle {{
+                background-color: {COLORS["border"]};
+                width: 1px;
+            }}
+            QSplitter::handle:hover {{
+                background-color: {COLORS["text_muted"]};
             }}
         """)
 
@@ -531,8 +544,8 @@ class AnkiPHMainDialog(QDialog):
                     except (ValueError, TypeError):
                         pass
                 
-                # Show install status in list (only show ⚠ for not installed)
-                prefix = "" if is_installed else "⚠ "
+                # Show install status in list (use bullet for not installed)
+                prefix = "â— " if is_installed else "â—‹ "
                 item = QListWidgetItem(f"{prefix}{deck_name}")
                 item.setData(Qt.ItemDataRole.UserRole, {
                     'deck_id': deck_id,
@@ -608,17 +621,17 @@ class AnkiPHMainDialog(QDialog):
         has_update = config.has_update_available(data.get('deck_id', ''))
         
         if not is_installed:
-            self.install_status.setText("⚠ This deck is not installed yet!")
+            self.install_status.setText("âš  This deck is not installed yet!")
             self.install_status.setStyleSheet("color: #ffa726;")
-            self.sync_btn.setText("🔄 Sync to Install")
+            self.sync_btn.setText("ðŸ”„ Sync to Install")
             self.sync_btn.setVisible(True)
         elif has_update:
-            self.install_status.setText("⬆ Update available!")
+            self.install_status.setText("â¬† Update available!")
             self.install_status.setStyleSheet("color: #4a90d9;")
-            self.sync_btn.setText("🔄 Sync Update")
+            self.sync_btn.setText("ðŸ”„ Sync Update")
             self.sync_btn.setVisible(True)
         else:
-            self.install_status.setText("✓ Installed and up to date")
+            self.install_status.setText("âœ“ Installed and up to date")
             self.install_status.setStyleSheet("color: #4CAF50;")
             self.sync_btn.setVisible(False)
         
@@ -679,7 +692,7 @@ class AnkiPHMainDialog(QDialog):
             
             # Get deck data (JSON)
             result = api.download_deck(deck_id)
-            print(f"✓ download_deck response: success={result.get('success')}")
+            print(f"âœ“ download_deck response: success={result.get('success')}")
             
             if not result.get('success'):
                 raise Exception(result.get('error', 'Sync failed'))
@@ -698,7 +711,7 @@ class AnkiPHMainDialog(QDialog):
                     title=result.get('title', deck_name),
                     card_count=len(result.get('cards', []))
                 )
-                tooltip(f"✓ {deck_name} synced!")
+                tooltip(f"âœ“ {deck_name} synced!")
                 self.load_decks()
             else:
                 raise Exception("Import returned invalid deck ID")
@@ -757,7 +770,7 @@ class AnkiPHMainDialog(QDialog):
                 if last_change_id:
                     self._save_last_change_id(deck_id, last_change_id)
                 
-                tooltip(f"✓ {deck_info.get('title', 'Deck')} installed! ({len(cards)} cards)")
+                tooltip(f"âœ“ {deck_info.get('title', 'Deck')} installed! ({len(cards)} cards)")
                 self.load_decks()
             else:
                 raise Exception("Failed to build deck in Anki")
@@ -810,7 +823,7 @@ class AnkiPHMainDialog(QDialog):
         # Get the actual deck ID (created when adding cards)
         actual_did = col.decks.id(deck_name)
         
-        print(f"✓ Deck built: {cards_added} added, {cards_updated} updated (deck ID: {actual_did})")
+        print(f"âœ“ Deck built: {cards_added} added, {cards_updated} updated (deck ID: {actual_did})")
         return actual_did
     
     def _create_or_update_note_type(self, col, note_type_data):
@@ -847,7 +860,7 @@ class AnkiPHMainDialog(QDialog):
         model['css'] = note_type_data.get('css', '')
         
         col.models.add(model)
-        print(f"✓ Created note type: {model_name}")
+        print(f"âœ“ Created note type: {model_name}")
         return model
     
     def _add_card_to_deck(self, col, deck_id, deck_name, card_data):
@@ -866,7 +879,7 @@ class AnkiPHMainDialog(QDialog):
             # Fallback to Basic
             model = col.models.by_name('Basic')
             if not model:
-                print(f"⚠ No note type found for {note_type_name}")
+                print(f"âš  No note type found for {note_type_name}")
                 return None
         
         # Check if note already exists by guid (escape special chars for search)
@@ -1054,7 +1067,7 @@ class DeckBrowserDialog(QDialog):
                     name = deck.get('title') or deck.get('name', 'Unknown')
                     
                     is_subscribed = deck_id in downloaded
-                    prefix = "✓ " if is_subscribed else ""
+                    prefix = "âœ“ " if is_subscribed else ""
                     
                     item = QListWidgetItem(f"{prefix}{name}")
                     item.setData(Qt.ItemDataRole.UserRole, deck)
@@ -1110,7 +1123,7 @@ class DeckBrowserDialog(QDialog):
             
             # Get deck data (JSON) directly
             result = api.download_deck(deck_id)
-            print(f"✓ download_deck response: success={result.get('success')}")
+            print(f"âœ“ download_deck response: success={result.get('success')}")
             
             if result.get('success'):
                 # Use unified JSON import
@@ -1164,13 +1177,13 @@ class SyncInstallDialog(QDialog):
         
         # Deck list
         for name in self.deck_names:
-            item = QLabel(f"• {name}")
+            item = QLabel(f"â€¢ {name}")
             item.setStyleSheet("color: #4a90d9; padding-left: 10px;")
             layout.addWidget(item)
         
         # Warning
         warning = QLabel(
-            "⚠ Please go to your other devices with Anki and sync before installing new deck(s).\n"
+            "âš  Please go to your other devices with Anki and sync before installing new deck(s).\n"
             "Any unsynchronized reviews or changes on other devices may be lost during installation."
         )
         warning.setStyleSheet("color: #ffa726; font-size: 11px; padding: 10px; background-color: #2d2d2d; border-radius: 4px;")
@@ -1278,4 +1291,3 @@ def show_membership_required_dialog(parent=None):
 
 # For backwards compatibility - alias to new dialog
 # DeckManagementDialog = AnkiPHMainDialog
-
