@@ -1,7 +1,6 @@
 """
-AnkiPH Anki Addon - DEBUG STEP 2
-Adding: lazy imports + menu + dialog
-NOT adding: startup hook (_on_startup)
+AnkiPH Anki Addon
+v4.0.0 - Subscription-based deck sync for Philippine bar exam prep
 """
 
 from aqt import mw, gui_hooks
@@ -14,11 +13,11 @@ import threading
 # GLOBALS
 # ============================================================================
 
-_dialog = None
+_dialog = None  # Singleton dialog instance
 _dialog_lock = threading.Lock()
 _initialized = False
 
-# Lazy-loaded modules
+# Lazy-loaded modules (import on first use)
 logger = None
 config = None
 update_checker = None
@@ -53,10 +52,11 @@ def _init():
         return True
         
     except Exception as e:
+        # Log full traceback for debugging
         import traceback
         error_detail = traceback.format_exc()
         print(f"✗ AnkiPH failed to load:\n{error_detail}")
-        return False
+        return False  # Caller decides whether to show UI error
 
 
 # ============================================================================
@@ -66,6 +66,7 @@ def _init():
 def _on_menu_click(*_):
     """Handle menu bar click: show login or main dialog"""
     if not _init():
+        # Only show error dialog on explicit user action
         showInfo(
             "AnkiPH failed to load.\n\n"
             "Possible causes:\n"
@@ -89,6 +90,19 @@ def _on_menu_click(*_):
 
 
 # ============================================================================
+# UTILITIES
+# ============================================================================
+
+def _run_background(target, name):
+    """Launch background thread with consistent settings"""
+    threading.Thread(
+        target=target,
+        daemon=True,
+        name=f"AnkiPH-{name}"
+    ).start()
+
+
+# ============================================================================
 # DIALOG MANAGEMENT
 # ============================================================================
 
@@ -97,6 +111,7 @@ def _show_dialog():
     global _dialog
     
     with _dialog_lock:
+        # Reuse if already open
         if _dialog and not _dialog.isHidden():
             _dialog.raise_()
             _dialog.activateWindow()
@@ -111,20 +126,67 @@ def _show_dialog():
         except Exception as e:
             showInfo(f"Dialog error: {e}")
             logger and logger.exception("Dialog creation failed")
-            _dialog = None
+            _dialog = None  # Ensure cleanup on failure
 
 
 def _on_dialog_close():
-    """Cleanup after dialog closes"""
+    """Cleanup after dialog closes, sync progress in background"""
     global _dialog
     _dialog = None
-    # NOTE: Disabled sync on close for debugging
-    # if config and config.is_logged_in():
-    #     _run_background(_sync_progress, "Sync")
+    
+    if config and config.is_logged_in():
+        _run_background(_sync_progress, "Sync")
+
+
+def _sync_progress():
+    """Background: Sync study progress to server"""
+    try:
+        from . import sync
+        from .api_client import set_access_token
+        
+        # Thread-safe read of token (config handles locking internally)
+        if token := config.get_access_token():
+            set_access_token(token)
+            sync.sync_progress()
+            logger and logger.info("Progress synced")
+            
+    except Exception as e:
+        logger and logger.warning(f"Sync failed: {e}")
 
 
 # ============================================================================
-# ANKI INTEGRATION (NO STARTUP HOOK)
+# STARTUP HOOK
+# ============================================================================
+
+def _on_startup():
+    """Auto-check for deck updates on Anki launch"""
+    if not _init() or not config.is_logged_in():
+        return
+    
+    _run_background(_check_updates, "Startup")
+
+
+def _check_updates():
+    """Background: Check for deck updates (notify only, no auto-apply)"""
+    try:
+        updates = update_checker.check_for_updates(silent=True)
+        
+        if updates:
+            # Show notification on main thread (thread-safe)
+            mw.taskman.run_on_main(
+                lambda: tooltip(f"⚖️ AnkiPH: {len(updates)} update(s) available", period=3000)
+            )
+            # NOTE: Disabled auto_apply_updates - it was causing:
+            # 1. Empty decks being created (API returns no cards)
+            # 2. Qt crashes from mw.reset() threading issues
+            # Users can manually sync from the AnkiPH dialog instead
+            
+    except Exception as e:
+        logger and logger.warning(f"Update check failed: {e}")
+
+
+# ============================================================================
+# ANKI INTEGRATION
 # ============================================================================
 
 def _setup_menu():
@@ -142,8 +204,9 @@ def _setup_menu():
             action
         )
         
+        # Health logging
         print(
-            f"✓ AnkiPH v{ADDON_VERSION} loaded (DEBUG: no startup hook)\n"
+            f"✓ AnkiPH v{ADDON_VERSION} loaded\n"
             f"  Python {sys.version.split()[0]} | "
             f"Anki {mw.appVersion if hasattr(mw, 'appVersion') else 'unknown'} | "
             f"{platform.system()}"
@@ -155,13 +218,12 @@ def _setup_menu():
 
 
 # ============================================================================
-# ENTRY POINT - NO STARTUP HOOK FOR DEBUGGING
+# ENTRY POINT
 # ============================================================================
 
 try:
     _setup_menu()
-    # NOTE: Disabled startup hook for debugging
-    # gui_hooks.main_window_did_init.append(_on_startup)
+    gui_hooks.main_window_did_init.append(_on_startup)
     
 except Exception as e:
     print(f"✗ Fatal AnkiPH error: {e}")
