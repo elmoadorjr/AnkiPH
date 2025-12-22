@@ -41,6 +41,9 @@ SUBSCRIBE_URL: Final[str] = PREMIUM_URL  # Alias
 # API CONFIGURATION
 # =============================================================================
 
+# API Base URL
+API_BASE_URL: Final[str] = "https://ladvckxztcleljbiomcf.supabase.co/functions/v1"
+
 # Database Limits
 SQLITE_MAX_VARIABLES: Final[int] = 999  # SQLite query placeholder limit
 

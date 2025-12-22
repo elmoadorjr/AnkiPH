@@ -1,7 +1,7 @@
 """
 Deck importer for the AnkiPH addon
 Handles importing deck data directly from JSON into Anki (Database-Only Sync)
-Version: 3.0.0
+Version: 4.0.0 - Fixed GUID search and error handling
 """
 
 import os
@@ -12,6 +12,7 @@ from aqt.operations import QueryOp
 from aqt.utils import showInfo
 from anki.notes import Note
 from .logger import logger
+from .utils import escape_anki_search
 
 def import_deck_from_json(deck_data: Dict, deck_name: str) -> int:
     """
@@ -53,6 +54,10 @@ def import_deck_from_json(deck_data: Dict, deck_name: str) -> int:
         
         # 4. Sync Cards/Notes
         cards = deck_data.get('cards', [])
+        if not cards:
+            logger.warning("No cards found in deck data")
+            return int(deck_id)
+            
         logger.info(f"Syncing {len(cards)} cards...")
         
         new_cnt = 0
@@ -122,7 +127,7 @@ def _sync_media_files(media_files: Any):
         # Assuming list of dicts like [{'filename': 'x.jpg', 'url': '...'}]
         items = []
         for m in media_files:
-            if 'filename' in m and 'url' in m:
+            if isinstance(m, dict) and 'filename' in m and 'url' in m:
                 items.append((m['filename'], m['url']))
                 
     for filename, url in items:
@@ -153,13 +158,24 @@ def _process_card(card_data: Dict, deck_id: int) -> bool:
     """
     guid = card_data.get('guid')
     if not guid:
+        logger.warning("Card data missing GUID, skipping")
         return False
     
-    existing_note = mw.col.get_note(mw.col.find_notes(f"guid:{guid}")[0]) if mw.col.find_notes(f"guid:{guid}") else None
+    # FIXED: Escape GUID for safe Anki search and check for results before accessing
+    escaped_guid = escape_anki_search(guid)
+    note_ids = mw.col.find_notes(f'guid:"{escaped_guid}"')
+    
+    existing_note = None
+    if note_ids:
+        try:
+            existing_note = mw.col.get_note(note_ids[0])
+        except Exception as e:
+            logger.error(f"Failed to get existing note {note_ids[0]}: {e}")
+            return False
     
     if existing_note:
         # Update existing
-        return _update_note(existing_note, card_data, deck_id)
+        return not _update_note(existing_note, card_data, deck_id)  # Returns False for update
     else:
         # Create new
         return _create_note(card_data, deck_id)
@@ -210,7 +226,7 @@ def _update_note(note: Note, card_data: Dict, deck_id: int) -> bool:
     if changes:
         note.flush()
         
-    return False
+    return changes
 
 def _fill_note_fields(note: Note, fields_data: Any) -> bool:
     """Populate note fields. Returns True if any field changed."""
@@ -285,11 +301,12 @@ def import_deck_with_progress(deck_data_provider, deck_name: str,
 
 # Keep existing utility functions for compatibility/utility
 def get_deck_stats(deck_id: int) -> dict:
-    # ... (same as before) ...
+    """Get statistics for a deck"""
     try:
         deck_id = int(deck_id)
         deck = mw.col.decks.get(deck_id)
-        if not deck: return {}
+        if not deck: 
+            return {}
         
         card_ids = mw.col.decks.cids(deck_id, children=True)
         total = len(card_ids)
@@ -298,10 +315,15 @@ def get_deck_stats(deck_id: int) -> dict:
         for cid in card_ids:
             try:
                 c = mw.col.get_card(cid)
-                if c.type == 0: new_c += 1
-                elif c.type == 1: learning_c += 1
-                elif c.type == 2: review_c += 1
-            except: pass
+                if c.type == 0: 
+                    new_c += 1
+                elif c.type == 1: 
+                    learning_c += 1
+                elif c.type == 2: 
+                    review_c += 1
+            except Exception as e:
+                logger.debug(f"Error getting card {cid}: {e}")
+                continue
             
         return {
             'name': deck['name'],
@@ -310,19 +332,24 @@ def get_deck_stats(deck_id: int) -> dict:
             'learning_cards': learning_c,
             'review_cards': review_c
         }
-    except:
+    except Exception as e:
+        logger.error(f"Error getting deck stats for {deck_id}: {e}")
         return {}
 
 def deck_exists(deck_id: int) -> bool:
+    """Check if a deck exists in Anki"""
     try:
         return mw.col.decks.get(int(deck_id)) is not None
-    except:
+    except Exception as e:
+        logger.debug(f"Deck check failed for {deck_id}: {e}")
         return False
 
 def delete_deck(deck_id: int) -> bool:
+    """Delete a deck from Anki"""
     try:
         mw.col.decks.remove([int(deck_id)])
         mw.reset()
         return True
-    except:
+    except Exception as e:
+        logger.error(f"Failed to delete deck {deck_id}: {e}")
         return False

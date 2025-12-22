@@ -10,7 +10,7 @@ Features:
 - Comprehensive error handling
 - Request/response logging
 
-Version: 4.2.0
+Version: 4.0.0
 """
 
 from __future__ import annotations
@@ -28,15 +28,16 @@ from .logger import logger
 
 try:
     from .constants import (
-        COLLECTION_URL, PREMIUM_URL, 
+        API_BASE_URL,
         API_BATCH_SIZE, API_MAX_BATCH_SIZE, API_MIN_BATCH_SIZE,
         SYNC_TIMEOUT_SECONDS, DOWNLOAD_TIMEOUT_SECONDS,
         TARGET_REQUEST_DURATION_MIN, TARGET_REQUEST_DURATION_MAX,
-        DEFAULT_MAX_RETRIES, MIN_TOKEN_LENGTH
+        DEFAULT_MAX_RETRIES, MIN_TOKEN_LENGTH,
+        PREMIUM_URL
     )
 except ImportError:
     # Fallback constants if constants.py is missing
-    COLLECTION_URL = "https://ankiph.lovable.app/collection"
+    API_BASE_URL = "https://ladvckxztcleljbiomcf.supabase.co/functions/v1"
     PREMIUM_URL = "https://ankiph.lovable.app/subscription"
     API_BATCH_SIZE = 500
     API_MAX_BATCH_SIZE = 1000
@@ -49,7 +50,6 @@ except ImportError:
     MIN_TOKEN_LENGTH = 20
 
 # API Configuration
-API_BASE = "https://ladvckxztcleljbiomcf.supabase.co/functions/v1"
 API_VERSION = "4.0"
 
 # HTTP Library Detection
@@ -228,7 +228,7 @@ class ApiClient:
     - Adaptive batch sizing
     """
     
-    def __init__(self, access_token: Optional[str] = None, base_url: str = API_BASE):
+    def __init__(self, access_token: Optional[str] = None, base_url: str = API_BASE_URL):
         self.access_token = access_token
         self.base_url = base_url.rstrip("/")
         self._refresh_lock = threading.Lock()  # Thread-safe token refresh
@@ -416,12 +416,13 @@ class ApiClient:
                 logger.error(f"Token refresh failed: {e}", exc_info=True)
                 return False
 
-    def _parse_response(self, response) -> Any:
+    def _parse_response(self, response, is_error_response: bool = False) -> Any:
         """
         Parse and validate HTTP response (shared logic).
         
         Args:
             response: requests.Response or http.client.HTTPResponse object
+            is_error_response: True if this is being called from error handler
         
         Returns:
             Parsed JSON data
@@ -435,7 +436,8 @@ class ApiClient:
             if hasattr(response, 'json'):
                 data = response.json()
             else:
-                data = json.loads(response.read().decode("utf-8"))
+                content = response.read() if hasattr(response, 'read') else b''
+                data = json.loads(content.decode("utf-8"))
         except Exception as e:
             status = response.status_code if hasattr(response, 'status_code') else response.getcode()
             raise AnkiPHAPIError(
@@ -444,7 +446,7 @@ class ApiClient:
                 details=str(e)
             )
         
-        status = response.status_code if hasattr(response, 'status_code') else response.getcode()
+        status = response.status_code if hasattr(response, 'status_code') else (response.code if hasattr(response, 'code') else response.getcode())
         
         # Check for rate limiting (429)
         if status == 429:
@@ -483,8 +485,8 @@ class ApiClient:
         timeout: int
     ) -> Any:
         """POST using requests library (preferred)"""
-        with requests.post(url, headers=headers, json=json_body or {}, timeout=timeout) as resp:
-            return self._parse_response(resp)
+        resp = requests.post(url, headers=headers, json=json_body or {}, timeout=timeout)
+        return self._parse_response(resp)
 
     def _post_with_urllib(
         self, 
@@ -498,12 +500,12 @@ class ApiClient:
             req_data = json.dumps(json_body or {}).encode("utf-8")
             req = _urllib_request.Request(url, data=req_data, headers=headers, method="POST")
             
-            with _urllib_request.urlopen(req, timeout=timeout) as resp:
-                return self._parse_response(resp)
+            resp = _urllib_request.urlopen(req, timeout=timeout)
+            return self._parse_response(resp)
                 
         except _urllib_error.HTTPError as he:
-            # Wrap in our exception type
-            return self._parse_response(he)
+            # FIXED: Handle 429 and other HTTP errors properly in error handler
+            return self._parse_response(he, is_error_response=True)
             
         except _urllib_error.URLError as ue:
             raise AnkiPHAPIError(
