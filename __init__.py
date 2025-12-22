@@ -172,7 +172,10 @@ def _check_updates():
         updates = update_checker.check_for_updates(silent=True)
         
         if updates:
-            tooltip(f"⚖️ AnkiPH: {len(updates)} update(s) available", period=3000)
+            # FIXED: Use mw.taskman to safely call GUI from background thread
+            mw.taskman.run_on_main(
+                lambda: tooltip(f"⚖️ AnkiPH: {len(updates)} update(s) available", period=3000)
+            )
             update_checker.auto_apply_updates()
             
     except Exception as e:

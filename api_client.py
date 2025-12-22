@@ -1337,25 +1337,40 @@ class ApiClient:
 # HELPER FUNCTIONS
 # ============================================================================
 
-def check_token_expiry(expires_at_str: Optional[str]) -> bool:
+def check_token_expiry(expires_at) -> bool:
     """
     Check if a token has expired.
     
     Args:
-        expires_at_str: ISO format timestamp string
+        expires_at: Unix timestamp (int/str) or ISO format timestamp string
     
     Returns:
         True if token is expired, False if still valid
     """
-    if not expires_at_str:
+    if not expires_at:
         return False  # No expiry = assume valid
     
     try:
-        expiry = datetime.fromisoformat(expires_at_str.replace('Z', '+00:00'))
-        now = datetime.now(expiry.tzinfo)
-        return now >= expiry
-    except (ValueError, TypeError, AttributeError):
-        logger.warning(f"Could not parse token expiry: {expires_at_str}")
+        # Handle Unix timestamp (integer or numeric string)
+        if isinstance(expires_at, (int, float)):
+            expiry = datetime.fromtimestamp(expires_at)
+            return datetime.now() >= expiry
+        
+        # Try parsing as numeric string (Unix timestamp)
+        if isinstance(expires_at, str) and expires_at.isdigit():
+            expiry = datetime.fromtimestamp(int(expires_at))
+            return datetime.now() >= expiry
+        
+        # Try parsing as ISO format string
+        if isinstance(expires_at, str):
+            expiry = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+            now = datetime.now(expiry.tzinfo)
+            return now >= expiry
+        
+        return False  # Unknown format, assume valid
+        
+    except (ValueError, TypeError, AttributeError, OSError) as e:
+        logger.warning(f"Could not parse token expiry '{expires_at}': {e}")
         return False  # Assume valid if can't parse
 
 

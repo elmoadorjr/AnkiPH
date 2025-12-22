@@ -14,6 +14,11 @@ from .config import config
 from .logger import logger
 
 
+def _safe_tooltip(msg: str, period: int = 3000):
+    """Thread-safe tooltip - can be called from background threads"""
+    mw.taskman.run_on_main(lambda: tooltip(msg, period=period))
+
+
 class UpdateChecker:
     """Handles checking for deck updates"""
     
@@ -123,14 +128,14 @@ class UpdateChecker:
                 else:
                     msg = f"{update_count} deck updates available!"
                 
-                tooltip(msg, period=3000)
+                _safe_tooltip(msg, period=3000)
                 
                 # Show detailed info if not silent
                 if not silent:
                     self._show_update_summary(updates_dict)
             else:
                 if not silent:
-                    tooltip("All decks are up to date! ✓", period=2000)
+                    _safe_tooltip("All decks are up to date! ✓", period=2000)
             
             logger.info(f"Update check complete: {update_count} update(s) available")
             
@@ -371,7 +376,7 @@ class UpdateChecker:
         
         # Show summary
         if success_count > 0:
-            tooltip(f"⚖️ AnkiPH: Synced {success_count} deck(s)", period=3000)
+            _safe_tooltip(f"⚖️ AnkiPH: Synced {success_count} deck(s)", period=3000)
         
         if fail_count > 0:
             logger.warning(f"{fail_count} deck(s) failed to auto-update")
