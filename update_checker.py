@@ -1,7 +1,7 @@
 """
 Update checking service for AnkiPH addon
 Checks for deck updates in the background and notifies users
-Version: 2.2.0 - Fixed token expiry handling
+Version: 4.0.0 - Fixed token expiry handling
 """
 
 import threading

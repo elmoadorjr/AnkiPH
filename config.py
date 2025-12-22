@@ -4,7 +4,7 @@ FIXED: Profile-specific deck tracking using collection metadata
 ENHANCED: Added update checking, notification tracking, and sync state management
 ENHANCED: Added subscription-only access support (subscriber, free tier)
 ENHANCED: Thread-safe cache operations
-Version: 3.2.1
+Version: 4.0.0
 """
 
 from aqt import mw
@@ -17,7 +17,7 @@ class Config:
     """Manages addon configuration and authentication state"""
     
     def __init__(self):
-        self.addon_name = "AnkiPH_Addon"
+        self.addon_name = "AnkiPH_addon"
         self._config_cache = None
         self._cache_timestamp = 0
         self._cache_timeout = 1.0  # 1 second cache

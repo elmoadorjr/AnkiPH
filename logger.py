@@ -27,7 +27,7 @@ class AnkiPHLogger:
             
             # File handler (optional, but useful)
             try:
-                addon_dir = os.path.dirname(os.path.dirname(__file__))
+                addon_dir = os.path.dirname(__file__)
                 log_dir = os.path.join(addon_dir, "logs")
                 if not os.path.exists(log_dir):
                     os.makedirs(log_dir)
